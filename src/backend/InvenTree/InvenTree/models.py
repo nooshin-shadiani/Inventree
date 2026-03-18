@@ -1329,7 +1329,7 @@ class InvenTreeBarcodeMixin(models.Model):
     @classmethod
     def lookup_barcode(cls, barcode_hash: str) -> models.Model:
         """Check if a model instance exists with the specified third-party barcode hash."""
-        return cls.objects.filter(barcode_hash=barcode_hash).first()
+        return cls.objects.filter(barcode_hash=barcode_hash).first()  # ty:ignore[invalid-return-type]
 
     def assign_barcode(
         self,
@@ -1485,7 +1485,7 @@ class InvenTreeImageMixin(models.Model):
 
     def rename_image(self, filename):
         """Rename the uploaded image file using the IMAGE_RENAME function."""
-        return self.IMAGE_RENAME(filename)  # type: ignore
+        return self.IMAGE_RENAME(filename)
 
     image = StdImageField(
         upload_to=rename_image,

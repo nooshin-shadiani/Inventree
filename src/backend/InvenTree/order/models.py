@@ -1,7 +1,7 @@
 """Order model definitions."""
 
 from decimal import Decimal
-from typing import Any, Optional
+from typing import Any, Optional, TypedDict
 
 from django.contrib.auth.models import User
 from django.core.exceptions import ValidationError
@@ -179,7 +179,7 @@ class TotalPriceMixin(models.Model):
         return total
 
 
-class BaseOrderReportContext(report.mixins.BaseReportContext):
+class BaseOrderReportContext(report.mixins.BaseReportContext, TypedDict):
     """Base context for all order models.
 
     Attributes:
@@ -199,7 +199,7 @@ class BaseOrderReportContext(report.mixins.BaseReportContext):
     title: str
 
 
-class PurchaseOrderReportContext(report.mixins.BaseReportContext):
+class PurchaseOrderReportContext(report.mixins.BaseReportContext, TypedDict):
     """Context for the purchase order model.
 
     Attributes:
@@ -221,7 +221,7 @@ class PurchaseOrderReportContext(report.mixins.BaseReportContext):
     supplier: Optional[Company]
 
 
-class SalesOrderReportContext(report.mixins.BaseReportContext):
+class SalesOrderReportContext(report.mixins.BaseReportContext, TypedDict):
     """Context for the sales order model.
 
     Attributes:
@@ -243,7 +243,7 @@ class SalesOrderReportContext(report.mixins.BaseReportContext):
     customer: Optional[Company]
 
 
-class ReturnOrderReportContext(report.mixins.BaseReportContext):
+class ReturnOrderReportContext(report.mixins.BaseReportContext, TypedDict):
     """Context for the return order model.
 
     Attributes:
@@ -570,7 +570,9 @@ class PurchaseOrder(TotalPriceMixin, Order):
 
     def report_context(self) -> PurchaseOrderReportContext:
         """Return report context data for this PurchaseOrder."""
-        return {**super().report_context(), 'supplier': self.supplier}
+        return_ctx = super().report_context()
+        return_ctx.update({'supplier': self.supplier})
+        return return_ctx
 
     def get_absolute_url(self) -> str:
         """Get the 'web' URL for this order."""
@@ -1269,7 +1271,9 @@ class SalesOrder(TotalPriceMixin, Order):
 
     def report_context(self) -> SalesOrderReportContext:
         """Generate report context data for this SalesOrder."""
-        return {**super().report_context(), 'customer': self.customer}
+        return_ctx = super().report_context()
+        return_ctx.update({'customer': self.customer})
+        return return_ctx
 
     def get_absolute_url(self) -> str:
         """Get the 'web' URL for this order."""
@@ -2197,7 +2201,7 @@ class SalesOrderLineItem(OrderLineItem):
         return self.shipped >= self.quantity
 
 
-class SalesOrderShipmentReportContext(report.mixins.BaseReportContext):
+class SalesOrderShipmentReportContext(report.mixins.BaseReportContext, TypedDict):
     """Context for the SalesOrderShipment model.
 
     Attributes:
@@ -2662,7 +2666,9 @@ class ReturnOrder(TotalPriceMixin, Order):
 
     def report_context(self) -> ReturnOrderReportContext:
         """Generate report context data for this ReturnOrder."""
-        return {**super().report_context(), 'customer': self.customer}
+        return_ctx = super().report_context()
+        return_ctx.update({'customer': self.customer})
+        return return_ctx
 
     def get_absolute_url(self):
         """Get the 'web' URL for this order."""

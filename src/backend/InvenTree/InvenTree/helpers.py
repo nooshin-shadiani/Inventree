@@ -199,7 +199,7 @@ def regenerate_imagefile(_file, _name: str):
         _name: Name of the variation (e.g. 'thumbnail', 'preview')
     """
     name = _file.field.attr_class.get_variation_name(_file.name, _name)
-    return ImageFieldFile(_file.instance, _file, name)  # type: ignore
+    return ImageFieldFile(_file.instance, _file, name)  # ty:ignore[too-many-positional-arguments]
 
 
 def image2name(img_obj: StdImageField, do_preview: bool, do_thumbnail: bool):
@@ -311,7 +311,7 @@ def TestIfImageURL(url):
     ]
 
 
-def str2bool(text, test=True):
+def str2bool(text, test=True) -> bool:
     """Test if a string 'looks' like a boolean value.
 
     Args:
