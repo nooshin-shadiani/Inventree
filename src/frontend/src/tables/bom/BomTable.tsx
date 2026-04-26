@@ -40,6 +40,7 @@ import {
   useEditApiFormModal
 } from '../../hooks/UseForm';
 import { useImporterState } from '../../states/ImporterState';
+import { useUserSettingsState } from '../../states/SettingsStates';
 import { useUserState } from '../../states/UserState';
 import {
   BooleanColumn,
@@ -52,7 +53,9 @@ import {
 } from '../ColumnRenderers';
 import { PartCategoryFilter } from '../Filter';
 import { InvenTreeTable } from '../InvenTreeTable';
+import RowExpansionIcon from '../RowExpansionIcon';
 import { TableHoverCard } from '../TableHoverCard';
+import { subassemblyRowExpansion } from './BomSubassemblyTable';
 
 // Calculate the total stock quantity available for a given BomItem
 function availableStockQuantity(record: any): number {
@@ -88,7 +91,11 @@ export function BomTable({
 
   const [isEditing, setIsEditing] = useState<boolean>(false);
 
+  const userSettings = useUserSettingsState();
+
   const tableColumns: TableColumn[] = useMemo(() => {
+    const allowExpansion = userSettings.isSet('SHOW_BOM_SUBASSEMBLY_LEVELS');
+
     return [
       {
         accessor: 'sub_part',
@@ -117,10 +124,22 @@ export function BomTable({
             );
           }
 
+          const assembly: boolean = record.sub_part_detail?.assembly ?? false;
+
           return (
             part && (
               <TableHoverCard
-                value={<RenderPartColumn part={part} />}
+                value={
+                  <Group gap='xs' justify='left'>
+                    {assembly && !isEditing && allowExpansion && (
+                      <RowExpansionIcon
+                        enabled
+                        expanded={table.isRowExpanded(record.pk)}
+                      />
+                    )}
+                    <RenderPartColumn part={part} />
+                  </Group>
+                }
                 iconColor={record.validated ? undefined : 'red'}
                 extra={extra}
                 title={t`Part Information`}
@@ -409,7 +428,7 @@ export function BomTable({
       },
       NoteColumn({})
     ];
-  }, [isEditing, partId, params]);
+  }, [table.isRowExpanded, isEditing, partId, params, userSettings]);
 
   const tableFilters: TableFilter[] = useMemo(() => {
     return [
@@ -535,7 +554,7 @@ export function BomTable({
     table: table
   });
 
-  const editSubstitues = useEditBomSubstitutesForm({
+  const editSubstitutes = useEditBomSubstitutesForm({
     bomItemId: selectedBomItem.pk,
     bomItem: selectedBomItem,
     onClose: () => {
@@ -608,7 +627,7 @@ export function BomTable({
           icon: <IconSwitch3 />,
           onClick: () => {
             setSelectedBomItem(record);
-            editSubstitues.open();
+            editSubstitutes.open();
           }
         },
         RowDeleteAction({
@@ -669,13 +688,16 @@ export function BomTable({
     ];
   }, [isEditing, partLocked, user]);
 
+  // Row expansion (for displaying subassemblies)
+  const rowExpansion = subassemblyRowExpansion({ table: table });
+
   return (
     <>
       {importBomItem.modal}
       {newBomItem.modal}
       {editBomItem.modal}
       {deleteBomItem.modal}
-      {editSubstitues.modal}
+      {editSubstitutes.modal}
       <Stack gap='xs'>
         {partLocked && (
           <Alert
@@ -692,6 +714,7 @@ export function BomTable({
           tableState={table}
           columns={tableColumns}
           props={{
+            minHeight: 400,
             params: {
               ...params,
               part: partId,
@@ -709,7 +732,8 @@ export function BomTable({
             enableSelection: isEditing && !partLocked,
             enableBulkDelete:
               isEditing && !partLocked && user.hasDeleteRole(UserRoles.part),
-            enableDownload: true
+            enableDownload: true,
+            rowExpansion: isEditing ? undefined : rowExpansion
           }}
         />
       </Stack>
