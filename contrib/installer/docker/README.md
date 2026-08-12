@@ -68,6 +68,30 @@ Requirements are Windows 10 22H2 (build 19045) or newer, or Windows 11 23H2
 (build 22631) or newer, with x86-64 virtualization enabled and at least 8 GB of
 RAM. Windows Server and Windows containers are not supported.
 
+### Enable virtualization on Windows
+
+Docker Desktop's WSL 2 backend requires CPU virtualization. This is a
+UEFI/BIOS setting, so the installer cannot enable it for you.
+
+1. Press `Ctrl`+`Shift`+`Esc`, open **Performance > CPU**, and check the
+   **Virtualization** value. If it says **Enabled**, continue with the installer.
+2. If it says **Disabled**, open Windows Settings and select **System >
+   Recovery > Advanced startup > Restart now**. On Windows 10, use **Update &
+   Security > Recovery > Advanced startup > Restart now**.
+3. Select **Troubleshoot > Advanced options > UEFI Firmware Settings >
+   Restart**. If that option is unavailable, use the computer manufacturer's
+   startup key or firmware instructions.
+4. In the firmware settings, enable **Intel Virtualization Technology**
+   (`VT-x` or `VMX`) or **SVM Mode** (`AMD-V`). `VT-d` or `IOMMU` alone is not
+   sufficient. Save the settings and restart Windows.
+5. Confirm that Task Manager now reports **Virtualization: Enabled**, then run
+   the installer. It enables **Windows Subsystem for Linux** and **Virtual
+   Machine Platform** automatically. If it requests a restart, restart Windows
+   and rerun the same installer command.
+
+If Windows itself is running inside a virtual machine, the host hypervisor must
+also expose nested virtualization to that VM.
+
 From an elevated PowerShell 5.1 or newer prompt:
 
 ```powershell
@@ -199,6 +223,7 @@ persistent inventory and backups are intentionally being destroyed.
 - [Docker Engine for Ubuntu](https://docs.docker.com/engine/install/ubuntu/)
 - [Docker Engine for Debian](https://docs.docker.com/engine/install/debian/)
 - [Docker Desktop for Windows](https://docs.docker.com/desktop/setup/install/windows-install/)
+- [Enable virtualization on Windows](https://support.microsoft.com/en-US/Windows/Experience/enable-virtualization-on-windows)
 - [Microsoft WSL installation](https://learn.microsoft.com/windows/wsl/install)
 - [`docker image save`](https://docs.docker.com/reference/cli/docker/image/save/)
 - [`docker image load`](https://docs.docker.com/reference/cli/docker/image/load/)
