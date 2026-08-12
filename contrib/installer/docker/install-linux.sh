@@ -867,12 +867,14 @@ verify_bundle_directory() {
     : > "$expected_paths"
     while IFS= read -r checksum_line; do
         if [[ ! "$checksum_line" =~ ^[0-9a-fA-F]{64}[[:space:]][[:space:]](\./.+)$ ]]; then
-            unlink "$actual_paths" "$expected_paths"
+            unlink -- "$actual_paths"
+            unlink -- "$expected_paths"
             die "Offline bundle contains an invalid checksum entry"
         fi
         checksum_path="${BASH_REMATCH[1]}"
         if [[ "$checksum_path" == *'/../'* || "$checksum_path" == '../'* || "$checksum_path" == */.. ]]; then
-            unlink "$actual_paths" "$expected_paths"
+            unlink -- "$actual_paths"
+            unlink -- "$expected_paths"
             die "Offline bundle checksum path escapes the bundle"
         fi
         printf '%s\n' "$checksum_path" >> "$expected_paths"
@@ -889,10 +891,12 @@ verify_bundle_directory() {
         sort -o "$expected_paths" "$expected_paths"
     )
     if ! cmp --silent "$actual_paths" "$expected_paths"; then
-        unlink "$actual_paths" "$expected_paths"
+        unlink -- "$actual_paths"
+        unlink -- "$expected_paths"
         die "Offline bundle contains missing or unlisted files"
     fi
-    unlink "$actual_paths" "$expected_paths"
+    unlink -- "$actual_paths"
+    unlink -- "$expected_paths"
 }
 
 verify_bundle_checksums() {
@@ -1222,6 +1226,12 @@ main() {
         note "Preparation complete"
         if [[ -z "$OFFLINE_BUNDLE" && "$NO_OFFLINE_CACHE" == false ]]; then
             printf 'Offline bundle: %s\n' "$BUNDLE_DIR"
+            printf 'Container image archive: %s/images-linux-%s.tar\n' "$BUNDLE_DIR" "$DAEMON_ARCH"
+            if [[ -d "$BUNDLE_DIR/prerequisites" ]]; then
+                printf 'Docker prerequisite cache: %s/prerequisites\n' "$BUNDLE_DIR"
+            fi
+            printf 'Manual image load: docker image load --input %q\n' \
+                "$BUNDLE_DIR/images-linux-${DAEMON_ARCH}.tar"
         fi
         return
     fi

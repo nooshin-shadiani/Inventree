@@ -17,6 +17,11 @@ contain the matching Docker Engine and Compose packages when the preparation
 host is a supported Ubuntu or Debian release. Windows bundles contain the pinned
 WSL and Docker Desktop installers.
 
+The generated bundle—not this Git checkout—is the complete offline installation
+media. Copy the whole bundle directory to a USB drive or other local storage.
+The installers automatically install the cached Docker prerequisite when it is
+missing and run `docker image load` on the saved application images.
+
 ## Linux
 
 Automatic Docker Engine installation supports the official x86-64 and ARM64
@@ -131,6 +136,47 @@ Desktop without Docker's permission. See
 for applicable licensing.
 
 Use `Get-Help .\install-windows.ps1 -Detailed` for all parameters.
+
+## Complete offline bundle contents
+
+Run the platform's `--prepare-only` / `-PrepareOnly` command once on a connected
+preparation computer. Do not copy only the installer script: keep the entire
+generated directory together.
+
+The Linux bundle contains:
+
+- `images-linux-<architecture>.tar`: the prebuilt InvenTree-with-plugin,
+  PostgreSQL, Redis, and Caddy images;
+- `prerequisites/linux-<distribution>-<release>-<architecture>/packages/`:
+  Docker Engine, Docker CLI, containerd, Buildx, Compose, and their resolved
+  `.deb` dependencies for that exact supported Ubuntu/Debian target;
+- the plugin source, Compose/Caddy configuration, manifests, and checksums.
+
+The private Windows bundle contains:
+
+- `images.tar`: all four prebuilt application images;
+- `prerequisites/windows/DockerDesktop-*.exe`: the pinned, signed Docker
+  Desktop installer;
+- `prerequisites/windows/wsl-*.msi`: the pinned, signed WSL installer;
+- the plugin source, Compose/Caddy configuration, manifests, and checksums.
+
+The offline installer loads the image archive automatically. To load only the
+images yourself after Docker is installed, run:
+
+```bash
+docker image load --input /path/to/inventree-linux/images-linux-amd64.tar
+```
+
+```powershell
+docker image load --input E:\inventree-windows\images.tar
+```
+
+The image archives and vendor installers are generated artifacts and are much
+larger than GitHub's regular 100 MiB Git file limit, so they are intentionally
+excluded from the repository. A Linux bundle may be distributed separately as
+fork Release assets. Do not publish a Windows bundle containing Docker Desktop:
+Docker Desktop may be retained only for licensed internal reuse unless Docker
+grants explicit redistribution permission.
 
 ## What happens during installation
 

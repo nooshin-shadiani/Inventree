@@ -1495,7 +1495,12 @@ function Write-ProtectedFileTransactionally {
     $leaf = Split-Path -Leaf $Destination
     $temporary = Join-Path $parent ".$leaf.$([Guid]::NewGuid().ToString('N')).tmp"
     try {
-        $stream = [IO.File]::OpenNew($temporary)
+        $stream = [IO.File]::Open(
+            $temporary,
+            [IO.FileMode]::CreateNew,
+            [IO.FileAccess]::Write,
+            [IO.FileShare]::None
+        )
         $stream.Dispose()
         Protect-SecretFile -Path $temporary
         Write-Utf8File -Path $temporary -Content $Content
@@ -1878,6 +1883,17 @@ function Main {
             Write-Step 'Preparation complete'
             if ([string]::IsNullOrWhiteSpace($OfflineBundle) -and -not $NoOfflineCache) {
                 Write-Host "Complete offline bundle: $BundleDirectory"
+                $imageArchive = Join-Path $BundleDirectory 'images.tar'
+                $dockerInstaller = Join-Path $BundleDirectory (
+                    "prerequisites\windows\DockerDesktop-$($script:Versions.DOCKER_DESKTOP_VERSION)-$($script:Versions.DOCKER_DESKTOP_BUILD)-x64.exe"
+                )
+                $wslInstaller = Join-Path $BundleDirectory (
+                    "prerequisites\windows\wsl-$($script:Versions.WSL_VERSION)-x64.msi"
+                )
+                Write-Host "Container image archive: $imageArchive"
+                Write-Host "Docker Desktop installer: $dockerInstaller"
+                Write-Host "WSL installer: $wslInstaller"
+                Write-Host "Manual image load: docker image load --input `"$imageArchive`""
             }
             return
         }
