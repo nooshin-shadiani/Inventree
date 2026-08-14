@@ -924,6 +924,7 @@ function Acquire-ApplicationImages {
             '--platform', 'linux/amd64',
             '--build-arg', "INVENTREE_BASE_SOURCE=$($script:Versions.INVENTREE_BASE_SOURCE)",
             '--build-arg', "PLUGIN_ARCHIVE_SHA256=$($script:Versions.PLUGIN_ARCHIVE_SHA256)",
+            '--build-arg', "PLUGIN_ARCHIVE_SUBDIRECTORY=$($script:Versions.PLUGIN_ARCHIVE_SUBDIRECTORY)",
             '--build-arg', "PLUGIN_VERSION=$($script:Versions.PLUGIN_VERSION)",
             '--tag', $script:Versions.INVENTREE_RUNTIME_IMAGE,
             $buildContext
@@ -1428,7 +1429,8 @@ function Assert-VersionManifest {
         'INSTALLER_FORMAT_VERSION', 'INVENTREE_BASE_SOURCE', 'INVENTREE_RUNTIME_IMAGE',
         'POSTGRES_SOURCE', 'POSTGRES_RUNTIME_IMAGE', 'REDIS_SOURCE', 'REDIS_RUNTIME_IMAGE',
         'CADDY_SOURCE', 'CADDY_RUNTIME_IMAGE', 'PLUGIN_VERSION', 'PLUGIN_COMMIT',
-        'PLUGIN_ARCHIVE_URL', 'PLUGIN_ARCHIVE_SHA256', 'DOCKER_DESKTOP_VERSION',
+        'PLUGIN_ARCHIVE_URL', 'PLUGIN_ARCHIVE_SHA256', 'PLUGIN_ARCHIVE_SUBDIRECTORY',
+        'DOCKER_DESKTOP_VERSION',
         'DOCKER_DESKTOP_BUILD', 'DOCKER_DESKTOP_URL', 'DOCKER_DESKTOP_SHA256',
         'WSL_VERSION', 'WSL_URL', 'WSL_SHA256'
     )

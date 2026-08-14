@@ -2,6 +2,7 @@ ARG INVENTREE_BASE_SOURCE=inventree/inventree@sha256:7e4c96a1987a8b308d3f157a7c3
 FROM ${INVENTREE_BASE_SOURCE}
 
 ARG PLUGIN_ARCHIVE_SHA256
+ARG PLUGIN_ARCHIVE_SUBDIRECTORY
 ARG PLUGIN_VERSION
 
 COPY cache/plugin-source.tar.gz /tmp/plugin-source.tar.gz
@@ -13,7 +14,7 @@ RUN echo "${PLUGIN_ARCHIVE_SHA256}  /tmp/plugin-source.tar.gz" | sha256sum --che
         --disable-pip-version-check \
         --no-build-isolation \
         --no-deps \
-        /tmp/plugin-source.tar.gz \
+        "file:///tmp/plugin-source.tar.gz#subdirectory=${PLUGIN_ARCHIVE_SUBDIRECTORY}" \
     && test "$(python -c 'import importlib.metadata; print(importlib.metadata.version("inventree-usd-irt-exchange-rate"))')" = "${PLUGIN_VERSION}" \
     && rm /tmp/plugin-source.tar.gz
 

@@ -2,7 +2,7 @@
 
 These installers deploy InvenTree, PostgreSQL, Redis, the Django-Q2 background
 worker, Caddy, and the
-[USD/IRT exchange-rate plugin](https://github.com/nooshin-shadiani/InventreeUSDIRTExchangeRate)
+[USD/IRT exchange-rate plugin](https://github.com/nooshin-shadiani/inventree-plugins/tree/main/plugins/usd-irt-exchange-rate)
 on Linux or Windows. The plugin is baked into the InvenTree image used by both
 the web server and worker, activated automatically, and configured for USD and
 Iranian toman (IRT).
