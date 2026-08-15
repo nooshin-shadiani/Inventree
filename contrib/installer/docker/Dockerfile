@@ -4,6 +4,8 @@ FROM ${INVENTREE_BASE_SOURCE}
 ARG PLUGIN_ARCHIVE_SHA256
 ARG PLUGIN_ARCHIVE_SUBDIRECTORY
 ARG PLUGIN_VERSION
+ARG STOCK_PLUGIN_ARCHIVE_SUBDIRECTORY
+ARG STOCK_PLUGIN_VERSION
 
 COPY cache/plugin-source.tar.gz /tmp/plugin-source.tar.gz
 
@@ -15,9 +17,15 @@ RUN echo "${PLUGIN_ARCHIVE_SHA256}  /tmp/plugin-source.tar.gz" | sha256sum --che
         --no-build-isolation \
         --no-deps \
         "file:///tmp/plugin-source.tar.gz#subdirectory=${PLUGIN_ARCHIVE_SUBDIRECTORY}" \
+    && python -m pip install \
+        --disable-pip-version-check \
+        --no-build-isolation \
+        --no-deps \
+        "file:///tmp/plugin-source.tar.gz#subdirectory=${STOCK_PLUGIN_ARCHIVE_SUBDIRECTORY}" \
     && test "$(python -c 'import importlib.metadata; print(importlib.metadata.version("inventree-usd-irt-exchange-rate"))')" = "${PLUGIN_VERSION}" \
+    && test "$(python -c 'import importlib.metadata; print(importlib.metadata.version("inventree-stock-xlsx-adjustment"))')" = "${STOCK_PLUGIN_VERSION}" \
     && rm /tmp/plugin-source.tar.gz
 
-LABEL org.opencontainers.image.title="InvenTree with USD/IRT exchange rate plugin" \
+LABEL org.opencontainers.image.title="InvenTree with USD/IRT and stock XLSX plugins" \
       org.opencontainers.image.source="https://github.com/nooshin-shadiani/Inventree" \
-      org.opencontainers.image.version="${PLUGIN_VERSION}"
+      org.opencontainers.image.version="currency-${PLUGIN_VERSION}-stock-${STOCK_PLUGIN_VERSION}"

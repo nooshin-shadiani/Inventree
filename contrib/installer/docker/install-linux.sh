@@ -27,7 +27,7 @@ INSTALLED_TEMP_FILE=""
 
 usage() {
     cat <<'EOF'
-Install InvenTree and the USD/IRT exchange-rate plugin with Docker.
+Install InvenTree with USD/IRT exchange-rate and stock XLSX plugins using Docker.
 
 Usage:
   ./install-linux.sh [options]
@@ -43,7 +43,7 @@ Options:
   --no-offline-cache       Install online without exporting an offline bundle
   -h, --help               Show this help
 
-Offline bundles contain all application images and the pinned plugin. Linux
+Offline bundles contain all application images and the pinned plugins. Linux
 Docker packages are cached only for the exact supported distro/release/CPU.
 EOF
 }
@@ -212,7 +212,7 @@ release_export_lock() {
 
 load_versions() {
     local versions_file="$1"
-    local allowed_keys=' INSTALLER_FORMAT_VERSION INVENTREE_BASE_SOURCE INVENTREE_RUNTIME_IMAGE POSTGRES_SOURCE POSTGRES_RUNTIME_IMAGE REDIS_SOURCE REDIS_RUNTIME_IMAGE CADDY_SOURCE CADDY_RUNTIME_IMAGE PLUGIN_VERSION PLUGIN_COMMIT PLUGIN_ARCHIVE_NAME PLUGIN_ARCHIVE_URL PLUGIN_ARCHIVE_SHA256 PLUGIN_ARCHIVE_SUBDIRECTORY DOCKER_DESKTOP_VERSION DOCKER_DESKTOP_BUILD DOCKER_DESKTOP_URL DOCKER_DESKTOP_SHA256 WSL_VERSION WSL_URL WSL_SHA256 '
+    local allowed_keys=' INSTALLER_FORMAT_VERSION INVENTREE_BASE_SOURCE INVENTREE_RUNTIME_IMAGE POSTGRES_SOURCE POSTGRES_RUNTIME_IMAGE REDIS_SOURCE REDIS_RUNTIME_IMAGE CADDY_SOURCE CADDY_RUNTIME_IMAGE PLUGIN_VERSION PLUGIN_COMMIT PLUGIN_ARCHIVE_NAME PLUGIN_ARCHIVE_URL PLUGIN_ARCHIVE_SHA256 PLUGIN_ARCHIVE_SUBDIRECTORY STOCK_PLUGIN_VERSION STOCK_PLUGIN_ARCHIVE_SUBDIRECTORY DOCKER_DESKTOP_VERSION DOCKER_DESKTOP_BUILD DOCKER_DESKTOP_URL DOCKER_DESKTOP_SHA256 WSL_VERSION WSL_URL WSL_SHA256 '
     [[ -f "$versions_file" ]] || die "Missing version manifest: $versions_file"
 
     while IFS='=' read -r key value; do
@@ -227,7 +227,8 @@ load_versions() {
         INSTALLER_FORMAT_VERSION INVENTREE_BASE_SOURCE INVENTREE_RUNTIME_IMAGE \
         POSTGRES_SOURCE POSTGRES_RUNTIME_IMAGE REDIS_SOURCE REDIS_RUNTIME_IMAGE \
         CADDY_SOURCE CADDY_RUNTIME_IMAGE PLUGIN_VERSION PLUGIN_COMMIT \
-        PLUGIN_ARCHIVE_URL PLUGIN_ARCHIVE_SHA256 PLUGIN_ARCHIVE_SUBDIRECTORY; do
+        PLUGIN_ARCHIVE_URL PLUGIN_ARCHIVE_SHA256 PLUGIN_ARCHIVE_SUBDIRECTORY \
+        STOCK_PLUGIN_VERSION STOCK_PLUGIN_ARCHIVE_SUBDIRECTORY; do
         [[ -n "${!required_key:-}" ]] || die "versions.env is missing $required_key"
     done
 }
@@ -648,7 +649,7 @@ download_plugin_source() {
     mkdir -p -- "$(dirname -- "$destination")"
 
     if [[ ! -f "$destination" ]] || [[ "$(sha256_file "$destination")" != "$PLUGIN_ARCHIVE_SHA256" ]]; then
-        note "Downloading pinned USD/IRT plugin source"
+        note "Downloading pinned plugin-suite source"
         curl --fail --location --silent --show-error "$PLUGIN_ARCHIVE_URL" --output "$destination"
     fi
 
@@ -659,17 +660,26 @@ image_id() {
     "${DOCKER[@]}" image inspect --format '{{.Id}}' -- "$1"
 }
 
+verify_plugin_image_versions() {
+    local reference="$1"
+    local verification_label="$2"
+    local installed_versions currency_version stock_version
+    installed_versions="$("${DOCKER[@]}" run --rm --entrypoint python "$reference" -c \
+        'import importlib.metadata; print(importlib.metadata.version("inventree-usd-irt-exchange-rate"), importlib.metadata.version("inventree-stock-xlsx-adjustment"), sep="\t")')"
+    IFS=$'\t' read -r currency_version stock_version <<< "$installed_versions"
+    [[ "$currency_version" == "$PLUGIN_VERSION" ]] \
+        || die "$verification_label currency plugin verification failed: expected ${PLUGIN_VERSION}, got ${currency_version:-missing}"
+    [[ "$stock_version" == "$STOCK_PLUGIN_VERSION" ]] \
+        || die "$verification_label stock plugin verification failed: expected ${STOCK_PLUGIN_VERSION}, got ${stock_version:-missing}"
+}
+
 snapshot_deployment_images() {
     INVENTREE_DEPLOY_IMAGE="$(image_id "$INVENTREE_RUNTIME_IMAGE")"
     POSTGRES_DEPLOY_IMAGE="$(image_id "$POSTGRES_RUNTIME_IMAGE")"
     REDIS_DEPLOY_IMAGE="$(image_id "$REDIS_RUNTIME_IMAGE")"
     CADDY_DEPLOY_IMAGE="$(image_id "$CADDY_RUNTIME_IMAGE")"
 
-    local installed_version
-    installed_version="$("${DOCKER[@]}" run --rm --entrypoint python "$INVENTREE_DEPLOY_IMAGE" \
-        -c 'import importlib.metadata; print(importlib.metadata.version("inventree-usd-irt-exchange-rate"))')"
-    [[ "$installed_version" == "$PLUGIN_VERSION" ]] \
-        || die "Plugin verification failed: expected ${PLUGIN_VERSION}, got ${installed_version}"
+    verify_plugin_image_versions "$INVENTREE_DEPLOY_IMAGE" "Built image"
 }
 
 acquire_application_images() {
@@ -688,7 +698,7 @@ acquire_application_images() {
     "${DOCKER[@]}" tag "$REDIS_SOURCE" "$REDIS_RUNTIME_IMAGE"
     "${DOCKER[@]}" tag "$CADDY_SOURCE" "$CADDY_RUNTIME_IMAGE"
 
-    note "Building the InvenTree image with plugin ${PLUGIN_VERSION}"
+    note "Building InvenTree with currency plugin ${PLUGIN_VERSION} and stock plugin ${STOCK_PLUGIN_VERSION}"
     build_context="$(mktemp -d)"
     trap 'if [[ -n "${build_context:-}" && -d "$build_context" ]]; then find "$build_context" -type f -delete; rmdir -- "$build_context/cache" "$build_context" 2>/dev/null || true; fi' RETURN
     mkdir -p -- "$build_context/cache"
@@ -700,6 +710,8 @@ acquire_application_images() {
         --build-arg "PLUGIN_ARCHIVE_SHA256=${PLUGIN_ARCHIVE_SHA256}" \
         --build-arg "PLUGIN_ARCHIVE_SUBDIRECTORY=${PLUGIN_ARCHIVE_SUBDIRECTORY}" \
         --build-arg "PLUGIN_VERSION=${PLUGIN_VERSION}" \
+        --build-arg "STOCK_PLUGIN_ARCHIVE_SUBDIRECTORY=${STOCK_PLUGIN_ARCHIVE_SUBDIRECTORY}" \
+        --build-arg "STOCK_PLUGIN_VERSION=${STOCK_PLUGIN_VERSION}" \
         --tag "$INVENTREE_RUNTIME_IMAGE" \
         "$build_context"
     find "$build_context" -type f -delete
@@ -723,6 +735,7 @@ write_bundle_manifest() {
         printf 'CADDY_IMAGE=%s\n' "$CADDY_RUNTIME_IMAGE"
         printf 'CADDY_IMAGE_ID=%s\n' "$CADDY_DEPLOY_IMAGE"
         printf 'PLUGIN_VERSION=%s\n' "$PLUGIN_VERSION"
+        printf 'STOCK_PLUGIN_VERSION=%s\n' "$STOCK_PLUGIN_VERSION"
         printf 'PLUGIN_COMMIT=%s\n' "$PLUGIN_COMMIT"
     } > "$destination"
 }
@@ -918,6 +931,7 @@ load_bundle_manifest() {
     [[ "${BUNDLE_INSTALLER_FORMAT_VERSION:-}" == "$INSTALLER_FORMAT_VERSION" ]] || die "Unsupported offline bundle format"
     [[ "${BUNDLE_PLATFORM:-}" == "linux/${DAEMON_ARCH}" ]] || die "Bundle platform ${BUNDLE_PLATFORM:-unknown} does not match linux/${DAEMON_ARCH}"
     [[ "${BUNDLE_PLUGIN_VERSION:-}" == "$PLUGIN_VERSION" ]] || die "Bundle plugin version does not match versions.env"
+    [[ "${BUNDLE_STOCK_PLUGIN_VERSION:-}" == "$STOCK_PLUGIN_VERSION" ]] || die "Bundle stock plugin version does not match versions.env"
     [[ "${BUNDLE_PLUGIN_COMMIT:-}" == "$PLUGIN_COMMIT" ]] || die "Bundle plugin commit does not match versions.env"
 
     local required_key
@@ -927,7 +941,7 @@ load_bundle_manifest() {
         BUNDLE_POSTGRES_IMAGE BUNDLE_POSTGRES_IMAGE_ID \
         BUNDLE_REDIS_IMAGE BUNDLE_REDIS_IMAGE_ID \
         BUNDLE_CADDY_IMAGE BUNDLE_CADDY_IMAGE_ID \
-        BUNDLE_PLUGIN_VERSION BUNDLE_PLUGIN_COMMIT; do
+        BUNDLE_PLUGIN_VERSION BUNDLE_STOCK_PLUGIN_VERSION BUNDLE_PLUGIN_COMMIT; do
         [[ -n "${!required_key:-}" ]] || die "Bundle manifest is missing ${required_key#BUNDLE_}"
     done
 
@@ -976,10 +990,7 @@ load_offline_images() {
     POSTGRES_DEPLOY_IMAGE="$BUNDLE_POSTGRES_IMAGE_ID"
     REDIS_DEPLOY_IMAGE="$BUNDLE_REDIS_IMAGE_ID"
     CADDY_DEPLOY_IMAGE="$BUNDLE_CADDY_IMAGE_ID"
-    local installed_version
-    installed_version="$("${DOCKER[@]}" run --rm --entrypoint python "$INVENTREE_DEPLOY_IMAGE" \
-        -c 'import importlib.metadata; print(importlib.metadata.version("inventree-usd-irt-exchange-rate"))')"
-    [[ "$installed_version" == "$PLUGIN_VERSION" ]] || die "Bundled plugin version verification failed"
+    verify_plugin_image_versions "$INVENTREE_DEPLOY_IMAGE" "Bundled image"
 }
 
 random_password() {
@@ -1046,6 +1057,122 @@ migrate_deployment_image_references() {
     fi
 }
 
+migrate_mandatory_plugins() {
+    local currency_slug='inventree-usd-irt-exchange-rate'
+    local stock_slug='inventree-stock-xlsx-adjustment'
+    local required_plugins="${currency_slug},${stock_slug}"
+    local configured_plugins
+    local mandatory_plugin_lines=()
+
+    mapfile -t mandatory_plugin_lines < <(sed -n 's/^INVENTREE_PLUGINS_MANDATORY=//p' "$INSTALL_DIR/.env")
+    ((${#mandatory_plugin_lines[@]} == 1)) \
+        || die "Existing .env must define INVENTREE_PLUGINS_MANDATORY exactly once. Add ${required_plugins} explicitly."
+    configured_plugins="${mandatory_plugin_lines[0]}"
+
+    if [[ ",$configured_plugins," == *",${currency_slug},"* ]] \
+        && [[ ",$configured_plugins," == *",${stock_slug},"* ]]; then
+        return
+    fi
+
+    if [[ "$configured_plugins" != "$currency_slug" ]]; then
+        die "Existing .env must include both mandatory plugins (${required_plugins}). Update INVENTREE_PLUGINS_MANDATORY explicitly, then rerun the installer."
+    fi
+
+    note "Adding the stock XLSX plugin to the installer-owned mandatory plugin list"
+    ENV_TEMP_FILE="$(mktemp --tmpdir="$INSTALL_DIR" '.env.tmp.XXXXXXXX')"
+    chmod 600 "$ENV_TEMP_FILE"
+    awk \
+        -v old_value="INVENTREE_PLUGINS_MANDATORY=${currency_slug}" \
+        -v new_value="INVENTREE_PLUGINS_MANDATORY=${required_plugins}" \
+        '$0 == old_value { $0 = new_value } { print }' \
+        "$INSTALL_DIR/.env" > "$ENV_TEMP_FILE"
+    mv -T -- "$ENV_TEMP_FILE" "$INSTALL_DIR/.env"
+    ENV_TEMP_FILE=""
+
+    configured_plugins="$(sed -n 's/^INVENTREE_PLUGINS_MANDATORY=//p' "$INSTALL_DIR/.env")"
+    [[ "$configured_plugins" == "$required_plugins" ]] \
+        || die "Could not add the stock XLSX plugin to INVENTREE_PLUGINS_MANDATORY"
+}
+
+validate_plugin_integration_settings() {
+    local configured_settings="$1"
+    local validation_result
+
+    validation_result="$("${DOCKER[@]}" run --rm --entrypoint python "$INVENTREE_DEPLOY_IMAGE" -c '
+import json
+import sys
+
+try:
+    settings = json.loads(sys.argv[1])
+except (json.JSONDecodeError, TypeError):
+    print("invalid JSON")
+    raise SystemExit
+
+invalid = []
+required_true = (
+    "ENABLE_PLUGINS_APP",
+    "ENABLE_PLUGINS_URL",
+    "ENABLE_PLUGINS_INTERFACE",
+    "ENABLE_PLUGINS_SCHEDULE",
+)
+for key in required_true:
+    if settings.get(key) is not True:
+        invalid.append(key)
+
+codes = {
+    code.strip().upper()
+    for code in str(settings.get("CURRENCY_CODES", "")).split(",")
+    if code.strip()
+}
+if not {"USD", "IRT"}.issubset(codes):
+    invalid.append("CURRENCY_CODES")
+if settings.get("INVENTREE_DEFAULT_CURRENCY") != "USD":
+    invalid.append("INVENTREE_DEFAULT_CURRENCY")
+if settings.get("CURRENCY_UPDATE_PLUGIN") != "inventree-usd-irt-exchange-rate":
+    invalid.append("CURRENCY_UPDATE_PLUGIN")
+if settings.get("CURRENCY_UPDATE_INTERVAL") != 0:
+    invalid.append("CURRENCY_UPDATE_INTERVAL")
+
+print("ok" if not invalid else ", ".join(invalid))
+' "$configured_settings")"
+
+    [[ "$validation_result" == ok ]] \
+        || die "Existing .env lacks required currency/plugin integration settings (${validation_result}). Enable App, URL, Interface, and Schedule integration while preserving your custom settings, then rerun."
+}
+
+migrate_plugin_integration_settings() {
+    local asset_root="$1"
+    local legacy_settings='{"INVENTREE_DEFAULT_CURRENCY":"USD","CURRENCY_CODES":"USD,IRT","CURRENCY_UPDATE_PLUGIN":"inventree-usd-irt-exchange-rate","CURRENCY_UPDATE_INTERVAL":0,"INVENTREE_UPDATE_CHECK_INTERVAL":0,"ENABLE_PLUGINS_SCHEDULE":true,"PLUGIN_ON_STARTUP":false,"INVENTREE_BACKUP_ENABLE":true,"INVENTREE_BACKUP_DAYS":1}'
+    local configured_settings expected_settings
+    local configured_lines=()
+    local template_lines=()
+
+    mapfile -t configured_lines < <(sed -n 's/^INVENTREE_GLOBAL_SETTINGS=//p' "$INSTALL_DIR/.env")
+    ((${#configured_lines[@]} == 1)) \
+        || die "Existing .env must define INVENTREE_GLOBAL_SETTINGS exactly once."
+    configured_settings="${configured_lines[0]}"
+
+    mapfile -t template_lines < <(sed -n 's/^INVENTREE_GLOBAL_SETTINGS=//p' "$asset_root/env.template")
+    ((${#template_lines[@]} == 1)) \
+        || die "env.template must define INVENTREE_GLOBAL_SETTINGS exactly once."
+    expected_settings="${template_lines[0]}"
+
+    if [[ "$configured_settings" == "$legacy_settings" ]]; then
+        note "Enabling app, URL, and interface integration in installer-owned settings"
+        ENV_TEMP_FILE="$(mktemp --tmpdir="$INSTALL_DIR" '.env.tmp.XXXXXXXX')"
+        chmod 600 "$ENV_TEMP_FILE"
+        awk \
+            -v old_value="INVENTREE_GLOBAL_SETTINGS=${legacy_settings}" \
+            -v new_value="INVENTREE_GLOBAL_SETTINGS=${expected_settings}" \
+            '$0 == old_value { $0 = new_value } { print }' \
+            "$INSTALL_DIR/.env" > "$ENV_TEMP_FILE"
+        mv -T -- "$ENV_TEMP_FILE" "$INSTALL_DIR/.env"
+        ENV_TEMP_FILE=""
+        configured_settings="$(sed -n 's/^INVENTREE_GLOBAL_SETTINGS=//p' "$INSTALL_DIR/.env")"
+    fi
+
+}
+
 prepare_deployment_files() {
     local asset_root="$SCRIPT_DIR"
     [[ -z "$OFFLINE_BUNDLE" ]] || asset_root="$OFFLINE_BUNDLE"
@@ -1094,12 +1221,17 @@ prepare_deployment_files() {
     else
         note "Checking existing $INSTALL_DIR/.env"
         migrate_deployment_image_references
+        migrate_mandatory_plugins
+        migrate_plugin_integration_settings "$asset_root"
 
         local configured_port
         configured_port="$(sed -n 's/^INVENTREE_HTTP_PORT=//p' "$INSTALL_DIR/.env" | tail -n 1)"
         [[ "$configured_port" == "$HTTP_PORT" ]] \
             || die "Existing .env uses HTTP port ${configured_port:-unknown}; rerun with --http-port ${configured_port:-PORT}."
     fi
+
+    validate_plugin_integration_settings \
+        "$(sed -n 's/^INVENTREE_GLOBAL_SETTINGS=//p' "$INSTALL_DIR/.env")"
 }
 
 compose() {
@@ -1129,12 +1261,16 @@ deploy_application() {
 
     note "Applying database migrations and collecting static files"
     compose run --rm --no-deps --entrypoint python inventree-server -c \
-        "import importlib.metadata; assert importlib.metadata.version('inventree-usd-irt-exchange-rate') == '${PLUGIN_VERSION}'" >/dev/null
+        "import importlib.metadata; assert importlib.metadata.version('inventree-usd-irt-exchange-rate') == '${PLUGIN_VERSION}'; assert importlib.metadata.version('inventree-stock-xlsx-adjustment') == '${STOCK_PLUGIN_VERSION}'" >/dev/null
     if [[ -f "$INSTALL_DIR/.installed" ]]; then
         note "Backing up the existing InvenTree database and media"
         compose run --rm inventree-server invoke backup
     fi
     compose run --rm inventree-server invoke migrate
+    note "Registering mandatory plugins and applying plugin-app migrations"
+    compose run --rm --entrypoint python inventree-server \
+        src/backend/InvenTree/manage.py shell -c \
+        "from django.utils.text import slugify; from plugin.models import PluginConfig; from plugin.registry import registry; tuple(PluginConfig.objects.get_or_create(key=slugify(module.SLUG if getattr(module, 'SLUG', None) else module.NAME)) for module in registry.plugin_modules); registry.reload_plugins(full_reload=True, force_reload=True, collect=True); plugin_slugs = ('inventree-usd-irt-exchange-rate', 'inventree-stock-xlsx-adjustment'); assert all(registry.get_plugin(slug) for slug in plugin_slugs), 'Mandatory plugins failed to load'; from django.core.management import call_command; call_command('migrate', interactive=False, run_syncdb=True); from django.db.migrations.recorder import MigrationRecorder; assert MigrationRecorder.Migration.objects.filter(app='inventree_usd_irt_exchange_rate', name='0001_price_exchange_snapshot').exists(), 'USD/IRT snapshot migration failed'"
     compose run --rm inventree-server invoke static
     compose run --rm inventree-server invoke int.clean-settings
 
@@ -1157,21 +1293,27 @@ deploy_application() {
     compose exec -T inventree-worker invoke worker-health --timeout=3 >/dev/null \
         || die "InvenTree started, but its background worker is not healthy"
 
-    local installed_version
-    installed_version="$(compose exec -T inventree-server python -c 'import importlib.metadata; print(importlib.metadata.version("inventree-usd-irt-exchange-rate"))')"
-    [[ "$installed_version" == "$PLUGIN_VERSION" ]] || die "Running plugin verification failed"
+    local running_versions running_currency_version running_stock_version
+    running_versions="$(compose exec -T inventree-server python -c \
+        'import importlib.metadata; print(importlib.metadata.version("inventree-usd-irt-exchange-rate"), importlib.metadata.version("inventree-stock-xlsx-adjustment"), sep="\t")')"
+    IFS=$'\t' read -r running_currency_version running_stock_version <<< "$running_versions"
+    [[ "$running_currency_version" == "$PLUGIN_VERSION" ]] || die "Running currency plugin verification failed"
+    [[ "$running_stock_version" == "$STOCK_PLUGIN_VERSION" ]] || die "Running stock plugin verification failed"
 
-    local active_plugin
-    active_plugin="$(compose exec -T inventree-server python src/backend/InvenTree/manage.py shell -c \
-        "from plugin.registry import registry; print('active' if registry.get_plugin('inventree-usd-irt-exchange-rate') else 'inactive')" \
+    local active_plugins currency_plugin_state stock_plugin_state
+    active_plugins="$(compose exec -T inventree-server python src/backend/InvenTree/manage.py shell -c \
+        "from plugin.registry import registry; print('active' if registry.get_plugin('inventree-usd-irt-exchange-rate') else 'inactive', 'active' if registry.get_plugin('inventree-stock-xlsx-adjustment') else 'inactive', sep='\t')" \
         | tail -n 1)"
-    [[ "$active_plugin" == active ]] || die "The USD/IRT plugin is installed but not active"
+    IFS=$'\t' read -r currency_plugin_state stock_plugin_state <<< "$active_plugins"
+    [[ "$currency_plugin_state" == active ]] || die "The USD/IRT plugin is installed but not active"
+    [[ "$stock_plugin_state" == active ]] || die "The stock XLSX plugin is installed but not active"
 
     INSTALLED_TEMP_FILE="$(mktemp --tmpdir="$INSTALL_DIR" '.installed.tmp.XXXXXXXX')"
     chmod 600 "$INSTALLED_TEMP_FILE"
     {
         printf 'INSTALLER_FORMAT_VERSION=%s\n' "$INSTALLER_FORMAT_VERSION"
         printf 'PLUGIN_VERSION=%s\n' "$PLUGIN_VERSION"
+        printf 'STOCK_PLUGIN_VERSION=%s\n' "$STOCK_PLUGIN_VERSION"
         printf 'PLUGIN_COMMIT=%s\n' "$PLUGIN_COMMIT"
     } > "$INSTALLED_TEMP_FILE"
     mv -T -- "$INSTALLED_TEMP_FILE" "$INSTALL_DIR/.installed"
@@ -1179,6 +1321,7 @@ deploy_application() {
 
     note "InvenTree is ready at http://localhost:${HTTP_PORT}"
     printf 'Data and automatic backups: %s/inventree-data\n' "$INSTALL_DIR"
+    printf 'Bulk stock adjustment is available from Stock Locations to authorized users.\n'
     printf 'TGJU live updates are disabled by default. Configure the plugin in Admin Center to enable them.\n'
 }
 
