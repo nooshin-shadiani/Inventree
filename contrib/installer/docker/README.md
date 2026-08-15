@@ -1,21 +1,28 @@
-# InvenTree + USD/IRT installer
+# InvenTree + USD/IRT and stock XLSX installer
 
 These installers deploy InvenTree, PostgreSQL, Redis, the Django-Q2 background
-worker, Caddy, and the
-[USD/IRT exchange-rate plugin](https://github.com/nooshin-shadiani/InventreeUSDIRTExchangeRate)
-on Linux or Windows. The plugin is baked into the InvenTree image used by both
-the web server and worker, activated automatically, and configured for USD and
-Iranian toman (IRT).
+worker, Caddy, the
+[USD/IRT exchange-rate plugin](https://github.com/nooshin-shadiani/inventree-plugins/tree/main/plugins/usd-irt-exchange-rate),
+and the
+[stock XLSX adjustment plugin](https://github.com/nooshin-shadiani/inventree-plugins/tree/main/plugins/stock-xlsx-adjustment)
+on Linux or Windows. Both plugins are baked into the InvenTree image used by
+the web server and worker and activated automatically. Currency support is
+configured for USD and Iranian toman (IRT).
 
 Prepare once on a connected machine, then reuse the resulting platform-specific
 bundle for multiple clean offline installs on the same supported platform and
 CPU architecture. The first online run retains this bundle by default.
 
-Every bundle contains the four container images, pinned plugin source,
+Every bundle contains the four container images, pinned plugin-suite source,
 deployment files, version manifest, and SHA-256 manifest. Linux bundles also
 contain the matching Docker Engine and Compose packages when the preparation
 host is a supported Ubuntu or Debian release. Windows bundles contain the pinned
 WSL and Docker Desktop installers.
+
+The generated bundle—not this Git checkout—is the complete offline installation
+media. Copy the whole bundle directory to a USB drive or other local storage.
+The installers automatically install the cached Docker prerequisite when it is
+missing and run `docker image load` on the saved application images.
 
 ## Linux
 
@@ -132,11 +139,52 @@ for applicable licensing.
 
 Use `Get-Help .\install-windows.ps1 -Detailed` for all parameters.
 
+## Complete offline bundle contents
+
+Run the platform's `--prepare-only` / `-PrepareOnly` command once on a connected
+preparation computer. Do not copy only the installer script: keep the entire
+generated directory together.
+
+The Linux bundle contains:
+
+- `images-linux-<architecture>.tar`: the prebuilt InvenTree-with-plugins,
+  PostgreSQL, Redis, and Caddy images;
+- `prerequisites/linux-<distribution>-<release>-<architecture>/packages/`:
+  Docker Engine, Docker CLI, containerd, Buildx, Compose, and their resolved
+  `.deb` dependencies for that exact supported Ubuntu/Debian target;
+- the plugin-suite source, Compose/Caddy configuration, manifests, and checksums.
+
+The private Windows bundle contains:
+
+- `images.tar`: all four prebuilt application images;
+- `prerequisites/windows/DockerDesktop-*.exe`: the pinned, signed Docker
+  Desktop installer;
+- `prerequisites/windows/wsl-*.msi`: the pinned, signed WSL installer;
+- the plugin-suite source, Compose/Caddy configuration, manifests, and checksums.
+
+The offline installer loads the image archive automatically. To load only the
+images yourself after Docker is installed, run:
+
+```bash
+docker image load --input /path/to/inventree-linux/images-linux-amd64.tar
+```
+
+```powershell
+docker image load --input E:\inventree-windows\images.tar
+```
+
+The image archives and vendor installers are generated artifacts and are much
+larger than GitHub's regular 100 MiB Git file limit, so they are intentionally
+excluded from the repository. A Linux bundle may be distributed separately as
+fork Release assets. Do not publish a Windows bundle containing Docker Desktop:
+Docker Desktop may be retained only for licensed internal reuse unless Docker
+grants explicit redistribution permission.
+
 ## What happens during installation
 
 1. The installer verifies Docker Engine and Compose v2 in Linux-container mode.
-2. Online mode downloads the commit-pinned plugin, pulls digest-pinned base
-   images, and builds one InvenTree image with the plugin already installed.
+2. Online mode downloads the commit-pinned plugin suite, pulls digest-pinned
+   base images, and builds one InvenTree image with both plugins installed.
 3. The images are tagged with installer-owned names. Offline mode instead
    checks `SHA256SUMS`, loads the saved image archive, and verifies every image
    ID before use.
@@ -146,7 +194,8 @@ Use `Get-Help .\install-windows.ps1 -Detailed` for all parameters.
 5. Database migrations and static-file collection run without package downloads.
    Existing installations are backed up before migration.
 6. The first run offers interactive administrator creation, starts the stack,
-   and verifies the web server, worker, and installed plugin version.
+   and verifies the web server, worker, installed package versions, and both
+   active plugin registrations.
 
 The deployment enables daily InvenTree database/media backups. The persistent
 data, secrets, uploaded files, plugin settings, and backups are stored under
@@ -163,6 +212,8 @@ The installer sets and locks these InvenTree system settings:
 - currency provider: `inventree-usd-irt-exchange-rate`
 - InvenTree's overlapping core currency interval: disabled
 - InvenTree's core GitHub release check: disabled
+- plugin app integration: enabled for price-snapshot models and migrations
+- plugin URL and user-interface integration: enabled for stock XLSX endpoints
 - plugin schedule integration: enabled
 
 The plugin's **Enable TGJU USD rate consumer** option remains disabled by
@@ -171,9 +222,44 @@ the consumer in Admin Center to scrape TGJU by XPath every three hours. Live
 TGJU refreshes require internet access even when InvenTree itself is installed
 from an offline bundle.
 
+When a USD or IRT part price is saved, the currency plugin records an immutable
+snapshot of the entered amount, its USD and IRT equivalents, the effective
+exchange rate, source, time, and user. Later exchange-rate changes do not alter
+that historical record.
+
+## Bulk stock adjustment
+
+Authorized users can open **Stock XLSX Adjustment** from **Stock Locations**,
+download the template, upload a workbook, preview every change, and then apply
+the workbook atomically. The worksheet columns are:
+
+| Column | Meaning |
+| --- | --- |
+| `stock_item_id` | Exact InvenTree stock-item or lot ID |
+| `operation` | `add`, `remove`, or `count` |
+| `quantity` | Positive delta for add/remove; non-negative absolute stocktake for count |
+| `notes` | Optional audit note, up to 512 characters |
+
+Each successful row uses InvenTree's normal stock movement methods, so the
+operation, delta, note, time, and user appear in stock history. Any invalid row
+rejects the whole workbook. Access requires **Stock Location > View** and
+**Stock Item > Change**; OAuth clients also require `r:change:stock`.
+
+## Shortages and replacement parts
+
+No extra plugin is needed for these workflows:
+
+- To check material for `N` products, create a Build Order with quantity `N`,
+  open **Build Lines**, filter **Available = No**, then use **Download > XLSX**.
+  The export follows the active filters and includes required, allocated,
+  consumed, primary-stock, substitute, and variant availability values.
+- Define manufacturing substitutes on the relevant BOM line so availability
+  and allocation include them. Use a part's **Related Parts** tab and note for
+  a global human-readable replacement reference.
+
 ## Version and network notes
 
-The plugin requires InvenTree 1.6.0 or newer. At the time this installer was
+The plugins require InvenTree 1.6.0 or newer. At the time this installer was
 created, the official stable image was still InvenTree 1.5.0, so
 `versions.env` deliberately pins a reviewed InvenTree 1.6 development image by
 digest. Update that pin to a tested 1.6 stable digest when it is released.
@@ -184,7 +270,7 @@ bundle on a connected machine matching the target platform and CPU, then
 transfer it. Reuse a bundle only on the platform and architecture recorded in
 its manifest; cached Linux Docker packages additionally require the exact
 distribution and release recorded with those prerequisites. Regenerate and
-review the bundle whenever the pinned application images, plugin, or
+review the bundle whenever the pinned application images, plugin suite, or
 prerequisite versions change; retained software does not receive security
 updates automatically. The offline checksums detect accidental corruption;
 they are not a third-party signature or a substitute for obtaining this

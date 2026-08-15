@@ -2,7 +2,7 @@
 
 <#
 .SYNOPSIS
-Installs InvenTree and the USD/IRT exchange-rate plugin with Docker Desktop.
+Installs InvenTree and its USD/IRT and stock XLSX plugins with Docker Desktop.
 
 .DESCRIPTION
 Online mode downloads pinned application inputs, builds the plugin image, and
@@ -845,7 +845,7 @@ function Get-PluginSourceOnline {
         Remove-Item -LiteralPath $destination -Force
     }
     if (-not (Test-Path -LiteralPath $destination -PathType Leaf)) {
-        Write-Step 'Downloading pinned USD/IRT plugin source'
+        Write-Step 'Downloading pinned plugin sources'
         Save-OnlineFile -Uri $script:Versions.PLUGIN_ARCHIVE_URL -Destination $destination
     }
     if ((Get-Sha256 -Path $destination) -ne $script:Versions.PLUGIN_ARCHIVE_SHA256.ToLowerInvariant()) {
@@ -883,16 +883,17 @@ function Assert-ImagePlatform {
     }
 }
 
-function Assert-PluginImageVersion {
+function Assert-PluginImageVersions {
     param([Parameter(Mandatory = $true)][string]$Reference)
 
     $output = Invoke-Docker -ArgumentList @(
         'run', '--rm', '--entrypoint', 'python', $Reference, '-c',
-        "import importlib.metadata; print(importlib.metadata.version('inventree-usd-irt-exchange-rate'))"
+        "import importlib.metadata as m; print(m.version('inventree-usd-irt-exchange-rate') + '|' + m.version('inventree-stock-xlsx-adjustment'))"
     ) -CaptureOutput
     $actual = Get-LastOutputLine -Output $output
-    if ($actual -ne $script:Versions.PLUGIN_VERSION) {
-        Throw-InstallerError "Plugin verification failed: expected $($script:Versions.PLUGIN_VERSION), got $actual"
+    $expected = "$($script:Versions.PLUGIN_VERSION)|$($script:Versions.STOCK_PLUGIN_VERSION)"
+    if ($actual -ne $expected) {
+        Throw-InstallerError "Plugin verification failed: expected $expected, got $actual"
     }
 }
 
@@ -918,13 +919,16 @@ function Acquire-ApplicationImages {
         Copy-Item -LiteralPath (Join-Path $script:ScriptDirectory 'Dockerfile') -Destination (Join-Path $buildContext 'Dockerfile')
         Copy-Item -LiteralPath $pluginSource -Destination (Join-Path $buildContext 'cache\plugin-source.tar.gz')
 
-        Write-Step "Building InvenTree with plugin $($script:Versions.PLUGIN_VERSION)"
+        Write-Step "Building InvenTree with plugins $($script:Versions.PLUGIN_VERSION) and $($script:Versions.STOCK_PLUGIN_VERSION)"
         Invoke-Docker -ArgumentList @(
             'build',
             '--platform', 'linux/amd64',
             '--build-arg', "INVENTREE_BASE_SOURCE=$($script:Versions.INVENTREE_BASE_SOURCE)",
             '--build-arg', "PLUGIN_ARCHIVE_SHA256=$($script:Versions.PLUGIN_ARCHIVE_SHA256)",
+            '--build-arg', "PLUGIN_ARCHIVE_SUBDIRECTORY=$($script:Versions.PLUGIN_ARCHIVE_SUBDIRECTORY)",
             '--build-arg', "PLUGIN_VERSION=$($script:Versions.PLUGIN_VERSION)",
+            '--build-arg', "STOCK_PLUGIN_ARCHIVE_SUBDIRECTORY=$($script:Versions.STOCK_PLUGIN_ARCHIVE_SUBDIRECTORY)",
+            '--build-arg', "STOCK_PLUGIN_VERSION=$($script:Versions.STOCK_PLUGIN_VERSION)",
             '--tag', $script:Versions.INVENTREE_RUNTIME_IMAGE,
             $buildContext
         )
@@ -943,7 +947,7 @@ function Acquire-ApplicationImages {
     )) {
         Assert-ImagePlatform -Reference $image
     }
-    Assert-PluginImageVersion -Reference $script:Versions.INVENTREE_RUNTIME_IMAGE
+    Assert-PluginImageVersions -Reference $script:Versions.INVENTREE_RUNTIME_IMAGE
     Set-DeploymentImageIds `
         -InventreeImage $script:Versions.INVENTREE_RUNTIME_IMAGE `
         -PostgresImage $script:Versions.POSTGRES_RUNTIME_IMAGE `
@@ -973,6 +977,7 @@ function Write-BundleManifest {
         "CADDY_IMAGE=$($script:Versions.CADDY_RUNTIME_IMAGE)",
         "CADDY_IMAGE_ID=$($ImageIds.CADDY_IMAGE_ID)",
         "PLUGIN_VERSION=$($script:Versions.PLUGIN_VERSION)",
+        "STOCK_PLUGIN_VERSION=$($script:Versions.STOCK_PLUGIN_VERSION)",
         "PLUGIN_COMMIT=$($script:Versions.PLUGIN_COMMIT)",
         "WSL_INSTALLER=$wslRelative",
         "DOCKER_DESKTOP_INSTALLER=$dockerRelative"
@@ -1116,6 +1121,7 @@ function Assert-WindowsBundleIdentity {
         REDIS_IMAGE = $script:Versions.REDIS_RUNTIME_IMAGE
         CADDY_IMAGE = $script:Versions.CADDY_RUNTIME_IMAGE
         PLUGIN_VERSION = $script:Versions.PLUGIN_VERSION
+        STOCK_PLUGIN_VERSION = $script:Versions.STOCK_PLUGIN_VERSION
         PLUGIN_COMMIT = $script:Versions.PLUGIN_COMMIT
     }
     foreach ($key in $expectedManifest.Keys) {
@@ -1348,7 +1354,8 @@ function Initialize-OfflineBundle {
         'INSTALLER_FORMAT_VERSION', 'HOST_PLATFORM', 'IMAGE_PLATFORM', 'IMAGES_ARCHIVE',
         'INVENTREE_IMAGE', 'INVENTREE_IMAGE_ID', 'POSTGRES_IMAGE', 'POSTGRES_IMAGE_ID',
         'REDIS_IMAGE', 'REDIS_IMAGE_ID', 'CADDY_IMAGE', 'CADDY_IMAGE_ID',
-        'PLUGIN_VERSION', 'PLUGIN_COMMIT', 'WSL_INSTALLER', 'DOCKER_DESKTOP_INSTALLER'
+        'PLUGIN_VERSION', 'STOCK_PLUGIN_VERSION', 'PLUGIN_COMMIT',
+        'WSL_INSTALLER', 'DOCKER_DESKTOP_INSTALLER'
     )
     Assert-RequiredKeys -Values $script:Bundle -SourceName 'bundle.env' -Keys $bundleKeys
     Assert-OnlyKeys -Values $script:Bundle -SourceName 'bundle.env' -Keys $bundleKeys
@@ -1360,6 +1367,7 @@ function Initialize-OfflineBundle {
         Throw-InstallerError "Offline bundle platform does not match Windows x86-64 with Linux containers"
     }
     if ($script:Bundle.PLUGIN_VERSION -ne $script:Versions.PLUGIN_VERSION -or
+        $script:Bundle.STOCK_PLUGIN_VERSION -ne $script:Versions.STOCK_PLUGIN_VERSION -or
         $script:Bundle.PLUGIN_COMMIT -ne $script:Versions.PLUGIN_COMMIT) {
         Throw-InstallerError 'Offline bundle plugin metadata does not match versions.env'
     }
@@ -1415,7 +1423,7 @@ function Load-OfflineImages {
     Verify-LoadedImage -Reference $script:Bundle.POSTGRES_IMAGE_ID -ExpectedId $script:Bundle.POSTGRES_IMAGE_ID
     Verify-LoadedImage -Reference $script:Bundle.REDIS_IMAGE_ID -ExpectedId $script:Bundle.REDIS_IMAGE_ID
     Verify-LoadedImage -Reference $script:Bundle.CADDY_IMAGE_ID -ExpectedId $script:Bundle.CADDY_IMAGE_ID
-    Assert-PluginImageVersion -Reference $script:Bundle.INVENTREE_IMAGE_ID
+    Assert-PluginImageVersions -Reference $script:Bundle.INVENTREE_IMAGE_ID
 
     $script:InventreeDeployImage = $script:Bundle.INVENTREE_IMAGE_ID
     $script:PostgresDeployImage = $script:Bundle.POSTGRES_IMAGE_ID
@@ -1428,7 +1436,9 @@ function Assert-VersionManifest {
         'INSTALLER_FORMAT_VERSION', 'INVENTREE_BASE_SOURCE', 'INVENTREE_RUNTIME_IMAGE',
         'POSTGRES_SOURCE', 'POSTGRES_RUNTIME_IMAGE', 'REDIS_SOURCE', 'REDIS_RUNTIME_IMAGE',
         'CADDY_SOURCE', 'CADDY_RUNTIME_IMAGE', 'PLUGIN_VERSION', 'PLUGIN_COMMIT',
-        'PLUGIN_ARCHIVE_URL', 'PLUGIN_ARCHIVE_SHA256', 'DOCKER_DESKTOP_VERSION',
+        'PLUGIN_ARCHIVE_URL', 'PLUGIN_ARCHIVE_SHA256', 'PLUGIN_ARCHIVE_SUBDIRECTORY',
+        'STOCK_PLUGIN_VERSION', 'STOCK_PLUGIN_ARCHIVE_SUBDIRECTORY',
+        'DOCKER_DESKTOP_VERSION',
         'DOCKER_DESKTOP_BUILD', 'DOCKER_DESKTOP_URL', 'DOCKER_DESKTOP_SHA256',
         'WSL_VERSION', 'WSL_URL', 'WSL_SHA256'
     )
@@ -1495,7 +1505,12 @@ function Write-ProtectedFileTransactionally {
     $leaf = Split-Path -Leaf $Destination
     $temporary = Join-Path $parent ".$leaf.$([Guid]::NewGuid().ToString('N')).tmp"
     try {
-        $stream = [IO.File]::OpenNew($temporary)
+        $stream = [IO.File]::Open(
+            $temporary,
+            [IO.FileMode]::CreateNew,
+            [IO.FileAccess]::Write,
+            [IO.FileShare]::None
+        )
         $stream.Dispose()
         Protect-SecretFile -Path $temporary
         Write-Utf8File -Path $temporary -Content $Content
@@ -1568,8 +1583,77 @@ function Exit-InstallLock {
     Remove-Item -LiteralPath $lockPath -Force -ErrorAction SilentlyContinue
 }
 
+function Assert-PluginIntegrationSettings {
+    param(
+        [Parameter(Mandatory = $true)][string]$Value,
+        [Parameter(Mandatory = $true)][string]$SourceName
+    )
+
+    try {
+        $integrationSettings = $Value | ConvertFrom-Json -ErrorAction Stop
+    }
+    catch {
+        Throw-InstallerError "$SourceName has invalid INVENTREE_GLOBAL_SETTINGS JSON"
+    }
+
+    $invalidSettings = [System.Collections.Generic.List[string]]::new()
+    foreach ($key in @(
+        'ENABLE_PLUGINS_APP',
+        'ENABLE_PLUGINS_URL',
+        'ENABLE_PLUGINS_INTERFACE',
+        'ENABLE_PLUGINS_SCHEDULE'
+    )) {
+        if ($integrationSettings.$key -ne $true) {
+            $invalidSettings.Add($key)
+        }
+    }
+
+    $currencyCodes = @()
+    if ($null -ne $integrationSettings.CURRENCY_CODES) {
+        $currencyCodes = @(
+            $integrationSettings.CURRENCY_CODES.ToString().Split(',') |
+                ForEach-Object { $_.Trim().ToUpperInvariant() } |
+                Where-Object { -not [string]::IsNullOrWhiteSpace($_) }
+        )
+    }
+    if ($currencyCodes -notcontains 'USD' -or $currencyCodes -notcontains 'IRT') {
+        $invalidSettings.Add('CURRENCY_CODES')
+    }
+    if ($integrationSettings.INVENTREE_DEFAULT_CURRENCY -ne 'USD') {
+        $invalidSettings.Add('INVENTREE_DEFAULT_CURRENCY')
+    }
+    if ($integrationSettings.CURRENCY_UPDATE_PLUGIN -ne 'inventree-usd-irt-exchange-rate') {
+        $invalidSettings.Add('CURRENCY_UPDATE_PLUGIN')
+    }
+    if ($integrationSettings.CURRENCY_UPDATE_INTERVAL -ne 0) {
+        $invalidSettings.Add('CURRENCY_UPDATE_INTERVAL')
+    }
+
+    if ($invalidSettings.Count -gt 0) {
+        Throw-InstallerError "$SourceName lacks required currency/plugin integration settings: $($invalidSettings -join ', '). Enable App, URL, Interface, and Schedule integration while preserving custom settings, then rerun."
+    }
+}
+
 function Prepare-DeploymentFiles {
     Assert-DeploymentImageIdsPresent
+
+    $currencyPluginSlug = 'inventree-usd-irt-exchange-rate'
+    $stockPluginSlug = 'inventree-stock-xlsx-adjustment'
+    $installerMandatoryPlugins = "$currencyPluginSlug,$stockPluginSlug"
+    $legacyGlobalSettings = '{"INVENTREE_DEFAULT_CURRENCY":"USD","CURRENCY_CODES":"USD,IRT","CURRENCY_UPDATE_PLUGIN":"inventree-usd-irt-exchange-rate","CURRENCY_UPDATE_INTERVAL":0,"INVENTREE_UPDATE_CHECK_INTERVAL":0,"ENABLE_PLUGINS_SCHEDULE":true,"PLUGIN_ON_STARTUP":false,"INVENTREE_BACKUP_ENABLE":true,"INVENTREE_BACKUP_DAYS":1}'
+
+    $templatePath = Join-Path $script:AssetRoot 'env.template'
+    Assert-RegularFile -Path $templatePath
+    $templateEnvironment = Read-StrictKeyValueFile -Path $templatePath
+    if (-not $templateEnvironment.ContainsKey('INVENTREE_PLUGINS_MANDATORY') -or
+        $templateEnvironment.INVENTREE_PLUGINS_MANDATORY -cne $installerMandatoryPlugins) {
+        Throw-InstallerError "env.template must set INVENTREE_PLUGINS_MANDATORY=$installerMandatoryPlugins"
+    }
+    if (-not $templateEnvironment.ContainsKey('INVENTREE_GLOBAL_SETTINGS')) {
+        Throw-InstallerError 'env.template must define INVENTREE_GLOBAL_SETTINGS'
+    }
+    $installerGlobalSettings = $templateEnvironment.INVENTREE_GLOBAL_SETTINGS
+    Assert-PluginIntegrationSettings -Value $installerGlobalSettings -SourceName 'env.template'
 
     Assert-RealDirectory -Path $InstallDirectory -Label 'Install directory' -Create
     $dataDirectory = Join-Path $InstallDirectory 'inventree-data'
@@ -1585,7 +1669,7 @@ function Prepare-DeploymentFiles {
     if (Test-Path -LiteralPath $environmentPath) {
         Assert-RegularFile -Path $environmentPath
         Protect-SecretFile -Path $environmentPath
-        Write-Step "Keeping existing $environmentPath unchanged"
+        Write-Step "Checking existing $environmentPath"
         $environment = Read-StrictKeyValueFile -Path $environmentPath
         $expected = @{
             INVENTREE_IMAGE = $script:InventreeDeployImage
@@ -1611,11 +1695,53 @@ function Prepare-DeploymentFiles {
                 Throw-InstallerError "Existing .env does not select this bundle's $key. Update it explicitly or use a new install directory."
             }
         }
-        if ($migrateImageReferences) {
-            Write-Step 'Pinning existing deployment configuration to immutable image IDs'
+
+        if (-not $environment.ContainsKey('INVENTREE_PLUGINS_MANDATORY')) {
+            Throw-InstallerError "Existing .env must set INVENTREE_PLUGINS_MANDATORY to include '$currencyPluginSlug' and '$stockPluginSlug'. Add both plugins without removing any custom entries, then rerun."
+        }
+        $mandatoryPlugins = @(
+            $environment.INVENTREE_PLUGINS_MANDATORY.Split(',') |
+                ForEach-Object { $_.Trim() } |
+                Where-Object { -not [string]::IsNullOrWhiteSpace($_) }
+        )
+        $migrateMandatoryPlugins = $false
+        if ($environment.INVENTREE_PLUGINS_MANDATORY -ceq $currencyPluginSlug) {
+            $migrateMandatoryPlugins = $true
+        }
+        elseif ($mandatoryPlugins -notcontains $currencyPluginSlug -or
+            $mandatoryPlugins -notcontains $stockPluginSlug) {
+            Throw-InstallerError "Existing .env has a custom INVENTREE_PLUGINS_MANDATORY list which does not include '$currencyPluginSlug' and '$stockPluginSlug'. Add both without removing custom entries, then rerun; the installer has not changed the file."
+        }
+
+        if (-not $environment.ContainsKey('INVENTREE_GLOBAL_SETTINGS')) {
+            Throw-InstallerError 'Existing .env must define INVENTREE_GLOBAL_SETTINGS'
+        }
+        $migrateIntegrationSettings = $environment.INVENTREE_GLOBAL_SETTINGS -ceq $legacyGlobalSettings
+        if (-not $migrateIntegrationSettings) {
+            Assert-PluginIntegrationSettings `
+                -Value $environment.INVENTREE_GLOBAL_SETTINGS `
+                -SourceName 'Existing .env'
+        }
+
+        if ($migrateImageReferences -or $migrateMandatoryPlugins -or $migrateIntegrationSettings) {
+            Write-Step 'Updating installer-owned deployment settings'
             $updatedLines = foreach ($line in [IO.File]::ReadAllLines($environmentPath)) {
-                if ($line -match '^([A-Z][A-Z0-9_]*)=(.*)$' -and $expected.ContainsKey($Matches[1])) {
-                    "$($Matches[1])=$($expected[$Matches[1]])"
+                if ($line -match '^([A-Z][A-Z0-9_]*)=(.*)$') {
+                    $environmentKey = $Matches[1]
+                    if ($migrateImageReferences -and $expected.ContainsKey($environmentKey)) {
+                        "$environmentKey=$($expected[$environmentKey])"
+                    }
+                    elseif ($migrateMandatoryPlugins -and
+                        $environmentKey -eq 'INVENTREE_PLUGINS_MANDATORY') {
+                        "INVENTREE_PLUGINS_MANDATORY=$installerMandatoryPlugins"
+                    }
+                    elseif ($migrateIntegrationSettings -and
+                        $environmentKey -eq 'INVENTREE_GLOBAL_SETTINGS') {
+                        "INVENTREE_GLOBAL_SETTINGS=$installerGlobalSettings"
+                    }
+                    else {
+                        $line
+                    }
                 }
                 else {
                     $line
@@ -1640,8 +1766,6 @@ function Prepare-DeploymentFiles {
         $script:EffectiveHttpPort = $configuredPort
     }
     else {
-        $templatePath = Join-Path $script:AssetRoot 'env.template'
-        Assert-RegularFile -Path $templatePath
         $content = [IO.File]::ReadAllText($templatePath)
         $content = $content.Replace('__INVENTREE_IMAGE__', $script:InventreeDeployImage)
         $content = $content.Replace('__POSTGRES_IMAGE__', $script:PostgresDeployImage)
@@ -1718,6 +1842,9 @@ function Wait-ForApplicationHealth {
 }
 
 function Deploy-Application {
+    $pluginVersionCommand = "import importlib.metadata as m; print(m.version('inventree-usd-irt-exchange-rate') + '|' + m.version('inventree-stock-xlsx-adjustment'))"
+    $expectedPluginVersions = "$($script:Versions.PLUGIN_VERSION)|$($script:Versions.STOCK_PLUGIN_VERSION)"
+
     Write-Step 'Validating deployment configuration'
     Invoke-Compose -ArgumentList @('config', '--quiet')
 
@@ -1729,10 +1856,10 @@ function Deploy-Application {
 
     $imageCheck = Invoke-Compose -ArgumentList @(
         'run', '--rm', '--no-deps', '--entrypoint', 'python', 'inventree-server', '-c',
-        "import importlib.metadata; print(importlib.metadata.version('inventree-usd-irt-exchange-rate'))"
+        $pluginVersionCommand
     ) -CaptureOutput
-    if ((Get-LastOutputLine -Output $imageCheck) -ne $script:Versions.PLUGIN_VERSION) {
-        Throw-InstallerError 'Deployment image does not contain the expected plugin version'
+    if ((Get-LastOutputLine -Output $imageCheck) -ne $expectedPluginVersions) {
+        Throw-InstallerError 'Deployment image does not contain the expected plugin versions'
     }
 
     $markerPath = Join-Path $InstallDirectory '.installed'
@@ -1745,6 +1872,12 @@ function Deploy-Application {
 
     Write-Step 'Applying database migrations and collecting static files'
     Invoke-Compose -ArgumentList @('run', '--rm', 'inventree-server', 'invoke', 'migrate')
+    Write-Step 'Registering mandatory plugins and applying plugin-app migrations'
+    Invoke-Compose -ArgumentList @(
+        'run', '--rm', '--entrypoint', 'python', 'inventree-server',
+        'src/backend/InvenTree/manage.py', 'shell', '-c',
+        "from django.utils.text import slugify; from plugin.models import PluginConfig; from plugin.registry import registry; tuple(PluginConfig.objects.get_or_create(key=slugify(module.SLUG if getattr(module, 'SLUG', None) else module.NAME)) for module in registry.plugin_modules); registry.reload_plugins(full_reload=True, force_reload=True, collect=True); plugin_slugs = ('inventree-usd-irt-exchange-rate', 'inventree-stock-xlsx-adjustment'); assert all(registry.get_plugin(slug) for slug in plugin_slugs), 'Mandatory plugins failed to load'; from django.core.management import call_command; call_command('migrate', interactive=False, run_syncdb=True); from django.db.migrations.recorder import MigrationRecorder; assert MigrationRecorder.Migration.objects.filter(app='inventree_usd_irt_exchange_rate', name='0001_price_exchange_snapshot').exists(), 'USD/IRT snapshot migration failed'"
+    )
     Invoke-Compose -ArgumentList @('run', '--rm', 'inventree-server', 'invoke', 'static')
     Invoke-Compose -ArgumentList @('run', '--rm', 'inventree-server', 'invoke', 'int.clean-settings')
 
@@ -1773,25 +1906,26 @@ function Deploy-Application {
     }
 
     Wait-ForApplicationHealth
-    $runningVersion = Invoke-Compose -ArgumentList @(
+    $runningVersions = Invoke-Compose -ArgumentList @(
         'exec', '-T', 'inventree-server', 'python', '-c',
-        "import importlib.metadata; print(importlib.metadata.version('inventree-usd-irt-exchange-rate'))"
+        $pluginVersionCommand
     ) -CaptureOutput
-    if ((Get-LastOutputLine -Output $runningVersion) -ne $script:Versions.PLUGIN_VERSION) {
+    if ((Get-LastOutputLine -Output $runningVersions) -ne $expectedPluginVersions) {
         Throw-InstallerError 'Running plugin version verification failed'
     }
 
-    $activePlugin = Invoke-Compose -ArgumentList @(
+    $activePlugins = Invoke-Compose -ArgumentList @(
         'exec', '-T', 'inventree-server', 'python', 'src/backend/InvenTree/manage.py', 'shell', '-c',
-        "from plugin.registry import registry; print('active' if registry.get_plugin('inventree-usd-irt-exchange-rate') else 'inactive')"
+        "from plugin.registry import registry; print('|'.join('active' if registry.get_plugin(slug) else 'inactive' for slug in ('inventree-usd-irt-exchange-rate', 'inventree-stock-xlsx-adjustment')))"
     ) -CaptureOutput
-    if ((Get-LastOutputLine -Output $activePlugin) -ne 'active') {
-        Throw-InstallerError 'The USD/IRT plugin is installed but not active'
+    if ((Get-LastOutputLine -Output $activePlugins) -ne 'active|active') {
+        Throw-InstallerError 'One or more required plugins are installed but not active'
     }
 
     $marker = @(
         "INSTALLER_FORMAT_VERSION=$($script:Versions.INSTALLER_FORMAT_VERSION)",
         "PLUGIN_VERSION=$($script:Versions.PLUGIN_VERSION)",
+        "STOCK_PLUGIN_VERSION=$($script:Versions.STOCK_PLUGIN_VERSION)",
         "PLUGIN_COMMIT=$($script:Versions.PLUGIN_COMMIT)"
     ) -join "`n"
     Write-ProtectedFileTransactionally -Destination $markerPath -Content ($marker + "`n")
@@ -1878,6 +2012,17 @@ function Main {
             Write-Step 'Preparation complete'
             if ([string]::IsNullOrWhiteSpace($OfflineBundle) -and -not $NoOfflineCache) {
                 Write-Host "Complete offline bundle: $BundleDirectory"
+                $imageArchive = Join-Path $BundleDirectory 'images.tar'
+                $dockerInstaller = Join-Path $BundleDirectory (
+                    "prerequisites\windows\DockerDesktop-$($script:Versions.DOCKER_DESKTOP_VERSION)-$($script:Versions.DOCKER_DESKTOP_BUILD)-x64.exe"
+                )
+                $wslInstaller = Join-Path $BundleDirectory (
+                    "prerequisites\windows\wsl-$($script:Versions.WSL_VERSION)-x64.msi"
+                )
+                Write-Host "Container image archive: $imageArchive"
+                Write-Host "Docker Desktop installer: $dockerInstaller"
+                Write-Host "WSL installer: $wslInstaller"
+                Write-Host "Manual image load: docker image load --input `"$imageArchive`""
             }
             return
         }
