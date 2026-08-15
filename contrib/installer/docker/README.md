@@ -222,6 +222,13 @@ the consumer in Admin Center to scrape TGJU by XPath every three hours. Live
 TGJU refreshes require internet access even when InvenTree itself is installed
 from an offline bundle.
 
+Every InvenTree money-field currency selector includes both USD and IRT,
+including the minimum and maximum override selectors under **Part Pricing >
+Pricing Overview > Edit Pricing**. Standard InvenTree price widgets continue to
+show the currency selected for that field. To see both conversions together,
+open **Plugin Provided > USD / IRT Pricing** on the part page; that panel shows
+the current calculated ranges in parallel USD and IRT columns.
+
 When a USD or IRT part price is saved, the currency plugin records an immutable
 snapshot of the entered amount, its USD and IRT equivalents, the effective
 exchange rate, source, time, and user. Later exchange-rate changes do not alter

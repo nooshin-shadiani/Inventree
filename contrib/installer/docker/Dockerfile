@@ -11,6 +11,8 @@ COPY cache/plugin-source.tar.gz /tmp/plugin-source.tar.gz
 
 # All runtime dependencies are already pinned in the InvenTree image. Avoid
 # build isolation and dependency resolution so this layer never accesses PyPI.
+# The currency plugin installs a Python startup hook because InvenTree validates
+# configured currency codes before loading external plugin entry points.
 RUN echo "${PLUGIN_ARCHIVE_SHA256}  /tmp/plugin-source.tar.gz" | sha256sum --check --strict - \
     && python -m pip install \
         --disable-pip-version-check \
@@ -22,6 +24,7 @@ RUN echo "${PLUGIN_ARCHIVE_SHA256}  /tmp/plugin-source.tar.gz" | sha256sum --che
         --no-build-isolation \
         --no-deps \
         "file:///tmp/plugin-source.tar.gz#subdirectory=${STOCK_PLUGIN_ARCHIVE_SUBDIRECTORY}" \
+    && python -c 'from moneyed import CURRENCIES; assert "IRT" in CURRENCIES' \
     && test "$(python -c 'import importlib.metadata; print(importlib.metadata.version("inventree-usd-irt-exchange-rate"))')" = "${PLUGIN_VERSION}" \
     && test "$(python -c 'import importlib.metadata; print(importlib.metadata.version("inventree-stock-xlsx-adjustment"))')" = "${STOCK_PLUGIN_VERSION}" \
     && rm /tmp/plugin-source.tar.gz
