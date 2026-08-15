@@ -1,0 +1,81 @@
+name: ${COMPOSE_PROJECT_NAME:-inventree-irt}
+
+services:
+  inventree-db:
+    image: ${INVENTREE_DB_IMAGE:?Set INVENTREE_DB_IMAGE in .env}
+    pull_policy: never
+    environment:
+      PGDATA: /var/lib/postgresql/data/pgdb
+      POSTGRES_USER: ${INVENTREE_DB_USER:?Set INVENTREE_DB_USER in .env}
+      POSTGRES_PASSWORD: ${INVENTREE_DB_PASSWORD:?Set INVENTREE_DB_PASSWORD in .env}
+      POSTGRES_DB: ${INVENTREE_DB_NAME:?Set INVENTREE_DB_NAME in .env}
+    volumes:
+      - ${INVENTREE_EXT_VOLUME:?Set INVENTREE_EXT_VOLUME in .env}/database:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+    restart: unless-stopped
+
+  inventree-cache:
+    image: ${INVENTREE_CACHE_IMAGE:?Set INVENTREE_CACHE_IMAGE in .env}
+    pull_policy: never
+    command: redis-server --save "" --appendonly no
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+    restart: unless-stopped
+
+  inventree-server:
+    image: ${INVENTREE_IMAGE:?Set INVENTREE_IMAGE in .env}
+    pull_policy: never
+    depends_on:
+      inventree-db:
+        condition: service_healthy
+      inventree-cache:
+        condition: service_healthy
+    env_file:
+      - .env
+    environment:
+      INVENTREE_SERVER: http://inventree-server:${INVENTREE_WEB_PORT:-8000}
+    volumes:
+      - ${INVENTREE_EXT_VOLUME}:/home/inventree/data
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "--silent", "http://localhost:8000/api/system/health/"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 30s
+    restart: unless-stopped
+
+  inventree-worker:
+    image: ${INVENTREE_IMAGE:?Set INVENTREE_IMAGE in .env}
+    pull_policy: never
+    command: invoke worker
+    depends_on:
+      inventree-server:
+        condition: service_healthy
+    env_file:
+      - .env
+    volumes:
+      - ${INVENTREE_EXT_VOLUME}:/home/inventree/data
+    restart: unless-stopped
+
+  inventree-proxy:
+    image: ${INVENTREE_PROXY_IMAGE:?Set INVENTREE_PROXY_IMAGE in .env}
+    pull_policy: never
+    depends_on:
+      inventree-server:
+        condition: service_healthy
+    ports:
+      - ${INVENTREE_BIND_ADDRESS:-127.0.0.1}:${INVENTREE_HTTP_PORT:-8000}:80
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - ${INVENTREE_EXT_VOLUME}/static:/var/www/static:ro
+      - ${INVENTREE_EXT_VOLUME}/media:/var/www/media:ro
+      - ${INVENTREE_EXT_VOLUME}/caddy/data:/data
+      - ${INVENTREE_EXT_VOLUME}/caddy/config:/config
+    restart: unless-stopped
