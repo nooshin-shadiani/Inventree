@@ -10,6 +10,7 @@ OFFLINE_BUNDLE=""
 HTTP_PORT="8000"
 SKIP_DOCKER_INSTALL=false
 SKIP_ADMIN=false
+TRAINING_DATA=false
 PREPARE_ONLY=false
 NO_OFFLINE_CACHE=false
 DOCKER=()
@@ -24,6 +25,7 @@ EXPORT_LOCK_DIR=""
 EXPORT_STAGING_DIR=""
 ENV_TEMP_FILE=""
 INSTALLED_TEMP_FILE=""
+TRAINING_TEMP_FILE=""
 
 usage() {
     cat <<'EOF'
@@ -39,12 +41,14 @@ Options:
   --bundle-dir PATH        Where online mode saves the reusable offline bundle
   --skip-docker-install    Require an existing Docker Engine + Compose v2
   --skip-admin             Do not prompt to create the first superuser
+  --training-data          Populate a new empty install with comprehensive demo data
   --prepare-only           Cache prerequisites/images; do not deploy or start
   --no-offline-cache       Install online without exporting an offline bundle
   -h, --help               Show this help
 
-Offline bundles contain all application images and the pinned plugins. Linux
-Docker packages are cached only for the exact supported distro/release/CPU.
+Offline bundles contain all application images, pinned plugins, and the pinned
+official training dataset. Linux Docker packages are cached only for the exact
+supported distro/release/CPU.
 EOF
 }
 
@@ -76,6 +80,7 @@ cleanup_installer() {
     set +e
     [[ -z "$ENV_TEMP_FILE" ]] || unlink -- "$ENV_TEMP_FILE"
     [[ -z "$INSTALLED_TEMP_FILE" ]] || unlink -- "$INSTALLED_TEMP_FILE"
+    [[ -z "$TRAINING_TEMP_FILE" ]] || unlink -- "$TRAINING_TEMP_FILE"
     remove_private_tree "$EXPORT_STAGING_DIR"
     if [[ -n "$EXPORT_LOCK_FD" ]]; then
         flock --unlock "$EXPORT_LOCK_FD"
@@ -212,7 +217,7 @@ release_export_lock() {
 
 load_versions() {
     local versions_file="$1"
-    local allowed_keys=' INSTALLER_FORMAT_VERSION INVENTREE_BASE_SOURCE INVENTREE_RUNTIME_IMAGE POSTGRES_SOURCE POSTGRES_RUNTIME_IMAGE REDIS_SOURCE REDIS_RUNTIME_IMAGE CADDY_SOURCE CADDY_RUNTIME_IMAGE PLUGIN_VERSION PLUGIN_COMMIT PLUGIN_ARCHIVE_NAME PLUGIN_ARCHIVE_URL PLUGIN_ARCHIVE_SHA256 PLUGIN_ARCHIVE_SUBDIRECTORY STOCK_PLUGIN_VERSION STOCK_PLUGIN_ARCHIVE_SUBDIRECTORY DOCKER_DESKTOP_VERSION DOCKER_DESKTOP_BUILD DOCKER_DESKTOP_URL DOCKER_DESKTOP_SHA256 WSL_VERSION WSL_URL WSL_SHA256 '
+    local allowed_keys=' INSTALLER_FORMAT_VERSION INVENTREE_BASE_SOURCE INVENTREE_RUNTIME_IMAGE POSTGRES_SOURCE POSTGRES_RUNTIME_IMAGE REDIS_SOURCE REDIS_RUNTIME_IMAGE CADDY_SOURCE CADDY_RUNTIME_IMAGE PLUGIN_VERSION PLUGIN_COMMIT PLUGIN_ARCHIVE_NAME PLUGIN_ARCHIVE_URL PLUGIN_ARCHIVE_SHA256 PLUGIN_ARCHIVE_SUBDIRECTORY STOCK_PLUGIN_VERSION STOCK_PLUGIN_ARCHIVE_SUBDIRECTORY TRAINING_DATASET_COMMIT TRAINING_DATASET_ARCHIVE_NAME TRAINING_DATASET_ARCHIVE_URL TRAINING_DATASET_ARCHIVE_SHA256 TRAINING_USD_IRT_RATE DOCKER_DESKTOP_VERSION DOCKER_DESKTOP_BUILD DOCKER_DESKTOP_URL DOCKER_DESKTOP_SHA256 WSL_VERSION WSL_URL WSL_SHA256 '
     [[ -f "$versions_file" ]] || die "Missing version manifest: $versions_file"
 
     while IFS='=' read -r key value; do
@@ -228,9 +233,20 @@ load_versions() {
         POSTGRES_SOURCE POSTGRES_RUNTIME_IMAGE REDIS_SOURCE REDIS_RUNTIME_IMAGE \
         CADDY_SOURCE CADDY_RUNTIME_IMAGE PLUGIN_VERSION PLUGIN_COMMIT \
         PLUGIN_ARCHIVE_URL PLUGIN_ARCHIVE_SHA256 PLUGIN_ARCHIVE_SUBDIRECTORY \
-        STOCK_PLUGIN_VERSION STOCK_PLUGIN_ARCHIVE_SUBDIRECTORY; do
+        STOCK_PLUGIN_VERSION STOCK_PLUGIN_ARCHIVE_SUBDIRECTORY \
+        TRAINING_DATASET_COMMIT TRAINING_DATASET_ARCHIVE_URL \
+        TRAINING_DATASET_ARCHIVE_SHA256 TRAINING_USD_IRT_RATE; do
         [[ -n "${!required_key:-}" ]] || die "versions.env is missing $required_key"
     done
+
+    [[ "$TRAINING_DATASET_ARCHIVE_SHA256" =~ ^[0-9a-fA-F]{64}$ ]] \
+        || die "Invalid training dataset SHA-256 in versions.env"
+    [[ "$TRAINING_DATASET_ARCHIVE_URL" == https://* ]] \
+        || die "Training dataset URL must use HTTPS"
+    [[ "$TRAINING_USD_IRT_RATE" =~ ^[0-9]+([.][0-9]+)?$ ]] \
+        || die "Training USD/IRT rate must be a positive number"
+    awk -v rate="$TRAINING_USD_IRT_RATE" 'BEGIN { exit !(rate > 0) }' \
+        || die "Training USD/IRT rate must be greater than zero"
 }
 
 parse_arguments() {
@@ -264,6 +280,10 @@ parse_arguments() {
                 SKIP_ADMIN=true
                 shift
                 ;;
+            --training-data)
+                TRAINING_DATA=true
+                shift
+                ;;
             --prepare-only)
                 PREPARE_ONLY=true
                 shift
@@ -288,6 +308,8 @@ parse_arguments() {
         || die "--prepare-only requires an offline bundle output"
     [[ "$PREPARE_ONLY" == false || -z "$OFFLINE_BUNDLE" ]] \
         || die "--prepare-only cannot be combined with --offline-bundle"
+    [[ "$PREPARE_ONLY" == false || "$TRAINING_DATA" == false ]] \
+        || die "--training-data deploys a training instance and cannot be combined with --prepare-only"
     validate_port
 
     INSTALL_DIR="$(canonicalize_directory_path "$INSTALL_DIR" "Install directory")"
@@ -656,6 +678,19 @@ download_plugin_source() {
     [[ "$(sha256_file "$destination")" == "$PLUGIN_ARCHIVE_SHA256" ]] || die "Plugin source checksum mismatch"
 }
 
+download_training_dataset() {
+    local destination="$1"
+    mkdir -p -- "$(dirname -- "$destination")"
+
+    if [[ ! -f "$destination" ]] || [[ "$(sha256_file "$destination")" != "$TRAINING_DATASET_ARCHIVE_SHA256" ]]; then
+        note "Downloading pinned official training dataset"
+        curl --fail --location --silent --show-error "$TRAINING_DATASET_ARCHIVE_URL" --output "$destination"
+    fi
+
+    [[ "$(sha256_file "$destination")" == "$TRAINING_DATASET_ARCHIVE_SHA256" ]] \
+        || die "Training dataset checksum mismatch"
+}
+
 image_id() {
     "${DOCKER[@]}" image inspect --format '{{.Id}}' -- "$1"
 }
@@ -737,6 +772,8 @@ write_bundle_manifest() {
         printf 'PLUGIN_VERSION=%s\n' "$PLUGIN_VERSION"
         printf 'STOCK_PLUGIN_VERSION=%s\n' "$STOCK_PLUGIN_VERSION"
         printf 'PLUGIN_COMMIT=%s\n' "$PLUGIN_COMMIT"
+        printf 'TRAINING_DATASET_COMMIT=%s\n' "$TRAINING_DATASET_COMMIT"
+        printf 'TRAINING_DATASET_ARCHIVE_SHA256=%s\n' "$TRAINING_DATASET_ARCHIVE_SHA256"
     } > "$destination"
 }
 
@@ -764,6 +801,8 @@ export_offline_bundle() {
     [[ -n "$destination_parent" ]] || die "Bundle export lock was not acquired"
     [[ "$destination_parent" == "$(dirname -- "$destination")" ]] \
         || die "Bundle export lock does not cover $destination"
+
+    download_training_dataset "$SCRIPT_DIR/cache/training-dataset.tar.gz"
 
     local previous="${destination}.previous"
     local obsolete=""
@@ -801,6 +840,7 @@ export_offline_bundle() {
     [[ -f "$SCRIPT_DIR/README.md" ]] && cp -- "$SCRIPT_DIR/README.md" "$staging/"
     [[ -f "$SCRIPT_DIR/install-windows.ps1" ]] && cp -- "$SCRIPT_DIR/install-windows.ps1" "$staging/"
     cp -- "$SCRIPT_DIR/cache/plugin-source.tar.gz" "$staging/cache/plugin-source.tar.gz"
+    cp -- "$SCRIPT_DIR/cache/training-dataset.tar.gz" "$staging/cache/training-dataset.tar.gz"
 
     "${DOCKER[@]}" image save \
         --output "$staging/images-linux-${DAEMON_ARCH}.tar" \
@@ -860,7 +900,7 @@ verify_bundle_structure() {
     local checksum_path special_path
     special_path="$(find "$bundle_root" -mindepth 1 ! -type f ! -type d -print -quit)"
     [[ -z "$special_path" ]] || die "Offline bundle contains a special file: $special_path"
-    for checksum_path in versions.env bundle.env compose.yaml Caddyfile env.template Dockerfile install-linux.sh; do
+    for checksum_path in versions.env bundle.env compose.yaml Caddyfile env.template Dockerfile install-linux.sh cache/plugin-source.tar.gz cache/training-dataset.tar.gz; do
         [[ -f "$bundle_root/$checksum_path" && ! -L "$bundle_root/$checksum_path" ]] \
             || die "Offline bundle is missing required file: $checksum_path"
     done
@@ -874,6 +914,10 @@ verify_bundle_directory() {
         || die "Offline bundle format does not match this installer"
     grep -Fqx "PLUGIN_COMMIT=${PLUGIN_COMMIT}" "$bundle_root/bundle.env" \
         || die "Offline bundle plugin does not match this installer"
+    grep -Fqx "TRAINING_DATASET_COMMIT=${TRAINING_DATASET_COMMIT}" "$bundle_root/bundle.env" \
+        || die "Offline bundle training dataset does not match this installer"
+    grep -Fqx "TRAINING_DATASET_ARCHIVE_SHA256=${TRAINING_DATASET_ARCHIVE_SHA256}" "$bundle_root/bundle.env" \
+        || die "Offline bundle training dataset checksum does not match this installer"
 
     local actual_paths expected_paths checksum_line checksum_path
     actual_paths="$(mktemp)"
@@ -933,6 +977,8 @@ load_bundle_manifest() {
     [[ "${BUNDLE_PLUGIN_VERSION:-}" == "$PLUGIN_VERSION" ]] || die "Bundle plugin version does not match versions.env"
     [[ "${BUNDLE_STOCK_PLUGIN_VERSION:-}" == "$STOCK_PLUGIN_VERSION" ]] || die "Bundle stock plugin version does not match versions.env"
     [[ "${BUNDLE_PLUGIN_COMMIT:-}" == "$PLUGIN_COMMIT" ]] || die "Bundle plugin commit does not match versions.env"
+    [[ "${BUNDLE_TRAINING_DATASET_COMMIT:-}" == "$TRAINING_DATASET_COMMIT" ]] || die "Bundle training dataset commit does not match versions.env"
+    [[ "${BUNDLE_TRAINING_DATASET_ARCHIVE_SHA256:-}" == "$TRAINING_DATASET_ARCHIVE_SHA256" ]] || die "Bundle training dataset checksum does not match versions.env"
 
     local required_key
     for required_key in \
@@ -941,7 +987,8 @@ load_bundle_manifest() {
         BUNDLE_POSTGRES_IMAGE BUNDLE_POSTGRES_IMAGE_ID \
         BUNDLE_REDIS_IMAGE BUNDLE_REDIS_IMAGE_ID \
         BUNDLE_CADDY_IMAGE BUNDLE_CADDY_IMAGE_ID \
-        BUNDLE_PLUGIN_VERSION BUNDLE_STOCK_PLUGIN_VERSION BUNDLE_PLUGIN_COMMIT; do
+        BUNDLE_PLUGIN_VERSION BUNDLE_STOCK_PLUGIN_VERSION BUNDLE_PLUGIN_COMMIT \
+        BUNDLE_TRAINING_DATASET_COMMIT BUNDLE_TRAINING_DATASET_ARCHIVE_SHA256; do
         [[ -n "${!required_key:-}" ]] || die "Bundle manifest is missing ${required_key#BUNDLE_}"
     done
 
@@ -1249,7 +1296,68 @@ existing_admin_count() {
         | tail -n 1
 }
 
+training_database_state() {
+    compose run --rm --no-deps --entrypoint python inventree-server \
+        src/backend/InvenTree/manage.py shell -c \
+        "from django.apps import apps; from django.contrib.auth import get_user_model; labels = ('part.Part', 'stock.StockItem', 'company.Company', 'build.Build', 'order.PurchaseOrder', 'order.SalesOrder', 'order.ReturnOrder', 'order.TransferOrder'); models = (apps.get_model(label) for label in labels); print('nonempty' if get_user_model().objects.exists() or any(model.objects.exists() for model in models) else 'empty')" \
+        | tail -n 1
+}
+
+import_training_data() {
+    local source_archive="$SCRIPT_DIR/cache/training-dataset.tar.gz"
+    require_regular_path "$source_archive" "Training dataset"
+    [[ -f "$source_archive" ]] || die "Training dataset is not available: $source_archive"
+    [[ "$(sha256_file "$source_archive")" == "$TRAINING_DATASET_ARCHIVE_SHA256" ]] \
+        || die "Training dataset checksum mismatch"
+
+    local database_state
+    database_state="$(training_database_state)"
+    [[ "$database_state" == empty ]] \
+        || die "--training-data is only allowed for a new empty database; existing data was not changed"
+
+    TRAINING_TEMP_FILE="$(mktemp --tmpdir="$INSTALL_DIR/inventree-data" '.training-dataset.XXXXXXXX.tar.gz')"
+    cp -- "$source_archive" "$TRAINING_TEMP_FILE"
+    [[ "$(sha256_file "$TRAINING_TEMP_FILE")" == "$TRAINING_DATASET_ARCHIVE_SHA256" ]] \
+        || die "Copied training dataset checksum mismatch"
+
+    local archive_name
+    archive_name="$(basename -- "$TRAINING_TEMP_FILE")"
+    note "Importing comprehensive official InvenTree training data"
+    # shellcheck disable=SC2016  # Variables expand inside the container shell.
+    compose run --rm --entrypoint sh inventree-server -ceu '
+training_dir="$(mktemp -d)"
+cleanup_training_dir() { rm -rf -- "$training_dir"; }
+trap cleanup_training_dir EXIT
+tar -xzf "/home/inventree/data/$1" --strip-components=1 -C "$training_dir"
+test -f "$training_dir/inventree_data.json"
+test -d "$training_dir/media"
+cp -a "$training_dir/media/." /home/inventree/data/media/
+invoke import-records --ignore-nonexistent -c -f "$training_dir/inventree_data.json"
+' -- "$archive_name"
+
+    unlink -- "$TRAINING_TEMP_FILE"
+    TRAINING_TEMP_FILE=""
+}
+
+configure_training_currency() {
+    compose run --rm --entrypoint python inventree-server \
+        src/backend/InvenTree/manage.py shell -c \
+        "from decimal import Decimal; from djmoney.contrib.exchange.models import Rate; from InvenTree.tasks import update_exchange_rates; from plugin.registry import registry; plugin = registry.get_plugin('inventree-usd-irt-exchange-rate'); assert plugin, 'USD/IRT plugin is not active'; plugin.set_setting('API_ENABLED', False); plugin.set_setting('USD_IRT_RATE', '${TRAINING_USD_IRT_RATE}'); update_exchange_rates(force=True); rates = {row.currency: row.value for row in Rate.objects.filter(backend='InvenTreeExchange')}; assert rates.get('USD') == Decimal('1') and rates.get('IRT') == Decimal('${TRAINING_USD_IRT_RATE}'), 'Training exchange rates were not initialized'"
+}
+
+verify_training_data() {
+    local verification_result
+    verification_result="$(compose exec -T inventree-server python src/backend/InvenTree/manage.py shell -c \
+        "from django.apps import apps; from django.contrib.auth import get_user_model; expected = {'part.Part': 438, 'stock.StockItem': 1278, 'part.BomItem': 268, 'part.BomItemSubstitute': 4, 'company.Company': 41, 'company.SupplierPart': 780, 'build.Build': 28, 'order.PurchaseOrder': 20, 'order.SalesOrder': 14, 'order.ReturnOrder': 7, 'order.TransferOrder': 5}; actual = {label: apps.get_model(label).objects.count() for label in expected}; assert actual == expected, f'Training record counts do not match: {actual}'; User = get_user_model(); passwords = {'admin': 'inventree', 'allaccess': 'nolimits', 'reader': 'readonly', 'engineer': 'partsonly'}; assert all(User.objects.get(username=name).check_password(password) for name, password in passwords.items()), 'Training accounts are invalid'; print('ok')" \
+        | tail -n 1)"
+    [[ "$verification_result" == ok ]] || die "Training dataset verification failed"
+}
+
 deploy_application() {
+    if [[ "$TRAINING_DATA" == true && -f "$INSTALL_DIR/.installed" ]]; then
+        die "--training-data is only allowed during the first installation; existing data was not changed"
+    fi
+
     note "Validating deployment configuration"
     compose config --quiet
 
@@ -1259,7 +1367,7 @@ deploy_application() {
     note "Starting database and cache"
     compose up -d --pull never --no-build inventree-db inventree-cache
 
-    note "Applying database migrations and collecting static files"
+    note "Applying database migrations"
     compose run --rm --no-deps --entrypoint python inventree-server -c \
         "import importlib.metadata; assert importlib.metadata.version('inventree-usd-irt-exchange-rate') == '${PLUGIN_VERSION}'; assert importlib.metadata.version('inventree-stock-xlsx-adjustment') == '${STOCK_PLUGIN_VERSION}'" >/dev/null
     if [[ -f "$INSTALL_DIR/.installed" ]]; then
@@ -1267,12 +1375,18 @@ deploy_application() {
         compose run --rm inventree-server invoke backup
     fi
     compose run --rm inventree-server invoke migrate
+    if [[ "$TRAINING_DATA" == true ]]; then
+        import_training_data
+    fi
     note "Registering mandatory plugins and applying plugin-app migrations"
     compose run --rm --entrypoint python inventree-server \
         src/backend/InvenTree/manage.py shell -c \
         "from django.utils.text import slugify; from plugin.models import PluginConfig; from plugin.registry import registry; tuple(PluginConfig.objects.get_or_create(key=slugify(module.SLUG if getattr(module, 'SLUG', None) else module.NAME)) for module in registry.plugin_modules); registry.reload_plugins(full_reload=True, force_reload=True, collect=True); plugin_slugs = ('inventree-usd-irt-exchange-rate', 'inventree-stock-xlsx-adjustment'); assert all(registry.get_plugin(slug) for slug in plugin_slugs), 'Mandatory plugins failed to load'; from django.core.management import call_command; call_command('migrate', interactive=False, run_syncdb=True); from django.db.migrations.recorder import MigrationRecorder; assert MigrationRecorder.Migration.objects.filter(app='inventree_usd_irt_exchange_rate', name='0001_price_exchange_snapshot').exists(), 'USD/IRT snapshot migration failed'"
     compose run --rm inventree-server invoke static
     compose run --rm inventree-server invoke int.clean-settings
+    if [[ "$TRAINING_DATA" == true ]]; then
+        configure_training_currency
+    fi
 
     if [[ "$SKIP_ADMIN" == false ]] && [[ "$(existing_admin_count)" == 0 ]]; then
         note "Create the first InvenTree administrator"
@@ -1307,6 +1421,9 @@ deploy_application() {
     IFS=$'\t' read -r currency_plugin_state stock_plugin_state <<< "$active_plugins"
     [[ "$currency_plugin_state" == active ]] || die "The USD/IRT plugin is installed but not active"
     [[ "$stock_plugin_state" == active ]] || die "The stock XLSX plugin is installed but not active"
+    if [[ "$TRAINING_DATA" == true ]]; then
+        verify_training_data
+    fi
 
     INSTALLED_TEMP_FILE="$(mktemp --tmpdir="$INSTALL_DIR" '.installed.tmp.XXXXXXXX')"
     chmod 600 "$INSTALLED_TEMP_FILE"
@@ -1315,6 +1432,8 @@ deploy_application() {
         printf 'PLUGIN_VERSION=%s\n' "$PLUGIN_VERSION"
         printf 'STOCK_PLUGIN_VERSION=%s\n' "$STOCK_PLUGIN_VERSION"
         printf 'PLUGIN_COMMIT=%s\n' "$PLUGIN_COMMIT"
+        printf 'TRAINING_DATA=%s\n' "$TRAINING_DATA"
+        printf 'TRAINING_DATASET_COMMIT=%s\n' "$TRAINING_DATASET_COMMIT"
     } > "$INSTALLED_TEMP_FILE"
     mv -T -- "$INSTALLED_TEMP_FILE" "$INSTALL_DIR/.installed"
     INSTALLED_TEMP_FILE=""
@@ -1323,10 +1442,18 @@ deploy_application() {
     printf 'Data and automatic backups: %s/inventree-data\n' "$INSTALL_DIR"
     printf 'Bulk stock adjustment is available from Stock Locations to authorized users.\n'
     printf 'TGJU live updates are disabled by default. Configure the plugin in Admin Center to enable them.\n'
+    if [[ "$TRAINING_DATA" == true ]]; then
+        printf 'Training accounts: admin/inventree, allaccess/nolimits, reader/readonly, engineer/partsonly\n'
+        printf 'Training USD/IRT rate: 1 USD = %s IRT (sample only, not a live market quote).\n' "$TRAINING_USD_IRT_RATE"
+    fi
 }
 
 main() {
     parse_arguments "$@"
+    if [[ "$TRAINING_DATA" == true && ( -e "$INSTALL_DIR/.installed" || -L "$INSTALL_DIR/.installed" ) ]]; then
+        require_regular_path "$INSTALL_DIR/.installed" "Installation marker"
+        die "--training-data is only allowed during the first installation; existing data was not changed"
+    fi
     detect_platform
 
     if [[ -n "$OFFLINE_BUNDLE" ]]; then
@@ -1361,6 +1488,9 @@ main() {
         require_command curl
         require_command sha256sum
         acquire_application_images
+        if [[ "$TRAINING_DATA" == true && "$NO_OFFLINE_CACHE" == true ]]; then
+            download_training_dataset "$SCRIPT_DIR/cache/training-dataset.tar.gz"
+        fi
         if [[ "$NO_OFFLINE_CACHE" == false ]]; then
             export_offline_bundle
         fi

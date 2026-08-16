@@ -14,10 +14,11 @@ bundle for multiple clean offline installs on the same supported platform and
 CPU architecture. The first online run retains this bundle by default.
 
 Every bundle contains the four container images, pinned plugin-suite source,
-deployment files, version manifest, and SHA-256 manifest. Linux bundles also
-contain the matching Docker Engine and Compose packages when the preparation
-host is a supported Ubuntu or Debian release. Windows bundles contain the pinned
-WSL and Docker Desktop installers.
+the pinned official InvenTree training dataset, deployment files, version
+manifest, and SHA-256 manifest. Linux bundles also contain the matching Docker
+Engine and Compose packages when the preparation host is a supported Ubuntu or
+Debian release. Windows bundles contain the pinned WSL and Docker Desktop
+installers.
 
 The generated bundle—not this Git checkout—is the complete offline installation
 media. Copy the whole bundle directory to a USB drive or other local storage.
@@ -50,6 +51,12 @@ The default deployment directory is `~/InvenTree`, the site is bound only to
 ./install-linux.sh \
     --prepare-only \
     --bundle-dir /path/to/removable-media/inventree-linux
+```
+
+For a new learning instance populated with the comprehensive training fixture:
+
+```bash
+./install-linux.sh --training-data
 ```
 
 Install from that bundle with networking disconnected:
@@ -106,6 +113,12 @@ Set-ExecutionPolicy -Scope Process Bypass
 .\install-windows.ps1
 ```
 
+For a new learning instance populated with the comprehensive training fixture:
+
+```powershell
+.\install-windows.ps1 -TrainingData
+```
+
 The script enables the required Windows features, installs/updates WSL, and can
 download and install the official Docker Desktop WSL2 backend after explicit
 acceptance of Docker's license. A Windows restart may be required; the script
@@ -152,7 +165,8 @@ The Linux bundle contains:
 - `prerequisites/linux-<distribution>-<release>-<architecture>/packages/`:
   Docker Engine, Docker CLI, containerd, Buildx, Compose, and their resolved
   `.deb` dependencies for that exact supported Ubuntu/Debian target;
-- the plugin-suite source, Compose/Caddy configuration, manifests, and checksums.
+- the plugin-suite source, official training dataset, Compose/Caddy
+  configuration, manifests, and checksums.
 
 The private Windows bundle contains:
 
@@ -160,7 +174,8 @@ The private Windows bundle contains:
 - `prerequisites/windows/DockerDesktop-*.exe`: the pinned, signed Docker
   Desktop installer;
 - `prerequisites/windows/wsl-*.msi`: the pinned, signed WSL installer;
-- the plugin-suite source, Compose/Caddy configuration, manifests, and checksums.
+- the plugin-suite source, official training dataset, Compose/Caddy
+  configuration, manifests, and checksums.
 
 The offline installer loads the image archive automatically. To load only the
 images yourself after Docker is installed, run:
@@ -193,15 +208,78 @@ grants explicit redistribution permission.
    overwritten.
 5. Database migrations and static-file collection run without package downloads.
    Existing installations are backed up before migration.
-6. The first run offers interactive administrator creation, starts the stack,
-   and verifies the web server, worker, installed package versions, and both
-   active plugin registrations.
+6. If training data was explicitly requested for a new empty installation, the
+   installer imports the pinned fixture, restores both mandatory plugins, and
+   initializes a simple offline USD/IRT example rate.
+7. The first run offers interactive administrator creation, starts the stack,
+   and verifies the web server, worker, installed package versions, both active
+   plugin registrations, and—when requested—the fixture counts and accounts.
 
 The deployment enables daily InvenTree database/media backups. The persistent
 data, secrets, uploaded files, plugin settings, and backups are stored under
 `<install-directory>/inventree-data`. Copy that directory to separate storage;
 the offline image archive is software installation media, not a backup of your
 inventory.
+
+## Comprehensive training fixture
+
+`--training-data` on Linux and `-TrainingData` on Windows populate a new,
+empty installation with the official
+[InvenTree demo dataset](https://github.com/inventree/demo-dataset), pinned to
+commit `54bff7ea774a00a3fcefac049137d92ece632a98` under its MIT license. The
+archive is SHA-256 pinned and included in every generated offline bundle, so
+the same fixture can be installed without internet access.
+
+The pinned fixture currently includes:
+
+| Area | Records |
+| --- | ---: |
+| Parts and categories | 438 parts in 28 categories |
+| Stock | 1,278 stock items in 19 locations |
+| Manufacturing | 268 BOM lines, 4 BOM substitutes, and 28 build orders |
+| Suppliers | 41 companies, 780 supplier parts, and 1,004 supplier price breaks |
+| Orders | 20 purchase, 14 sales, 7 return, and 5 transfer orders |
+
+It also contains parameters, related parts, stock history, test results,
+attachments, reports, labels, users, groups, and permission rules. The
+installer verifies the key record counts and account passwords before marking
+the installation complete.
+
+| Username | Password | Role to explore |
+| --- | --- | --- |
+| `admin` | `inventree` | Superuser and Admin Center |
+| `allaccess` | `nolimits` | Normal user with broad create/edit access |
+| `reader` | `readonly` | Read-only behavior |
+| `engineer` | `partsonly` | Parts and stock with restricted order access |
+
+Training mode also sets `1 USD = 100,000 IRT` with the TGJU consumer disabled.
+This is deliberately simple sample data for learning conversions, not a live
+market quote. Change the manual rate or enable TGJU in Admin Center before
+using current prices.
+
+The fixture import clears a database, so the option is guarded twice: it is
+accepted only when there is no completed installation marker and the database
+contains no users or inventory/business records. It refuses an existing
+installation instead of replacing its data. The demo passwords are public;
+keep a training instance bound to localhost, or change all passwords before
+allowing access from another computer. Do not use the fixture as production
+inventory.
+
+The flag works with an offline bundle too: append `--training-data` to the
+Linux offline-install command or `-TrainingData` to the Windows command shown
+above.
+
+A useful first tour is:
+
+1. Sign in as `admin` and compare the four users under **Admin Center > Users**.
+2. Browse **Parts**, open an assembly, and inspect its BOM, substitutes,
+   supplier parts, pricing, and **Plugin Provided > USD / IRT Pricing** panel.
+3. Browse **Stock Locations**, inspect item history, and open **Stock XLSX
+   Adjustment**.
+4. Open a build order and compare its **Build Lines**, allocations, shortages,
+   and completed outputs.
+5. Compare purchase, sales, return, and transfer order states, then sign in as
+   `reader` or `engineer` to see permission boundaries.
 
 ## Currency configuration
 
@@ -313,6 +391,7 @@ persistent inventory and backups are intentionally being destroyed.
 
 - [InvenTree Docker installation](https://docs.inventree.org/en/latest/start/docker/)
 - [InvenTree plugin installation](https://docs.inventree.org/en/latest/plugins/install/)
+- [Official InvenTree demo dataset](https://github.com/inventree/demo-dataset)
 - [Docker Engine for Ubuntu](https://docs.docker.com/engine/install/ubuntu/)
 - [Docker Engine for Debian](https://docs.docker.com/engine/install/debian/)
 - [Docker Desktop for Windows](https://docs.docker.com/desktop/setup/install/windows-install/)
