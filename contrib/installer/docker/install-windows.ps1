@@ -7,9 +7,13 @@ Installs InvenTree and its USD/IRT and stock XLSX plugins with Docker Desktop.
 .DESCRIPTION
 Online mode downloads pinned application inputs, builds the plugin image, and
 exports a reusable Windows offline application bundle by default. The bundle
-retains the pinned WSL and Docker Desktop installers for a first-time install
-without network access. Docker Desktop license acceptance is still required on
-the target machine.
+retains the pinned official training dataset, WSL installer, and Docker Desktop
+installer for a first-time install without network access. Docker Desktop
+license acceptance is still required on the target machine.
+
+.PARAMETER TrainingData
+Populates a new empty installation with the comprehensive official InvenTree
+demo dataset and a sample offline USD/IRT rate. Refuses existing installations.
 #>
 
 [CmdletBinding()]
@@ -32,6 +36,9 @@ param(
 
     [Parameter()]
     [switch]$SkipAdmin,
+
+    [Parameter()]
+    [switch]$TrainingData,
 
     [Parameter()]
     [switch]$PrepareOnly,
@@ -854,6 +861,22 @@ function Get-PluginSourceOnline {
     return $destination
 }
 
+function Get-TrainingDatasetOnline {
+    $destination = Join-Path $script:ScriptDirectory 'cache\training-dataset.tar.gz'
+    if ((Test-Path -LiteralPath $destination -PathType Leaf) -and
+        (Get-Sha256 -Path $destination) -ne $script:Versions.TRAINING_DATASET_ARCHIVE_SHA256.ToLowerInvariant()) {
+        Remove-Item -LiteralPath $destination -Force
+    }
+    if (-not (Test-Path -LiteralPath $destination -PathType Leaf)) {
+        Write-Step 'Downloading pinned official training dataset'
+        Save-OnlineFile -Uri $script:Versions.TRAINING_DATASET_ARCHIVE_URL -Destination $destination
+    }
+    if ((Get-Sha256 -Path $destination) -ne $script:Versions.TRAINING_DATASET_ARCHIVE_SHA256.ToLowerInvariant()) {
+        Throw-InstallerError 'Training dataset SHA-256 mismatch'
+    }
+    return $destination
+}
+
 function Get-ImageId {
     param([Parameter(Mandatory = $true)][string]$Reference)
 
@@ -979,6 +1002,8 @@ function Write-BundleManifest {
         "PLUGIN_VERSION=$($script:Versions.PLUGIN_VERSION)",
         "STOCK_PLUGIN_VERSION=$($script:Versions.STOCK_PLUGIN_VERSION)",
         "PLUGIN_COMMIT=$($script:Versions.PLUGIN_COMMIT)",
+        "TRAINING_DATASET_COMMIT=$($script:Versions.TRAINING_DATASET_COMMIT)",
+        "TRAINING_DATASET_ARCHIVE_SHA256=$($script:Versions.TRAINING_DATASET_ARCHIVE_SHA256)",
         "WSL_INSTALLER=$wslRelative",
         "DOCKER_DESKTOP_INSTALLER=$dockerRelative"
     )
@@ -1173,6 +1198,7 @@ function Export-OfflineBundle {
         Get-OnlineWslInstaller | Out-Null
     }
     $dockerInstaller = Get-OnlineDockerDesktopInstaller
+    $trainingDataset = Get-TrainingDatasetOnline
 
     if ($BundleDirectory -eq $InstallDirectory -or $BundleDirectory -eq $script:ScriptDirectory) {
         Throw-InstallerError 'Bundle directory cannot equal the install or installer source directory'
@@ -1184,7 +1210,7 @@ function Export-OfflineBundle {
     $dockerName = "DockerDesktop-$($script:Versions.DOCKER_DESKTOP_VERSION)-$($script:Versions.DOCKER_DESKTOP_BUILD)-x64.exe"
     $expectedFiles = @(
         'compose.yaml', 'Caddyfile', 'env.template', 'Dockerfile', 'versions.env',
-        'install-windows.ps1', 'cache/plugin-source.tar.gz',
+        'install-windows.ps1', 'cache/plugin-source.tar.gz', 'cache/training-dataset.tar.gz',
         "prerequisites/windows/$wslName", "prerequisites/windows/$dockerName",
         'DOCKER-DESKTOP-LICENSE.txt',
         'images.tar', 'bundle.env', 'SHA256SUMS'
@@ -1263,6 +1289,8 @@ function Export-OfflineBundle {
         }
         Copy-Item -LiteralPath (Join-Path $script:ScriptDirectory 'cache\plugin-source.tar.gz') `
             -Destination (Join-Path $staging 'cache\plugin-source.tar.gz')
+        Copy-Item -LiteralPath $trainingDataset `
+            -Destination (Join-Path $staging 'cache\training-dataset.tar.gz')
 
         Copy-Item -LiteralPath $script:WslInstallerPath `
             -Destination (Join-Path $staging "prerequisites\windows\$wslName")
@@ -1355,6 +1383,7 @@ function Initialize-OfflineBundle {
         'INVENTREE_IMAGE', 'INVENTREE_IMAGE_ID', 'POSTGRES_IMAGE', 'POSTGRES_IMAGE_ID',
         'REDIS_IMAGE', 'REDIS_IMAGE_ID', 'CADDY_IMAGE', 'CADDY_IMAGE_ID',
         'PLUGIN_VERSION', 'STOCK_PLUGIN_VERSION', 'PLUGIN_COMMIT',
+        'TRAINING_DATASET_COMMIT', 'TRAINING_DATASET_ARCHIVE_SHA256',
         'WSL_INSTALLER', 'DOCKER_DESKTOP_INSTALLER'
     )
     Assert-RequiredKeys -Values $script:Bundle -SourceName 'bundle.env' -Keys $bundleKeys
@@ -1371,6 +1400,10 @@ function Initialize-OfflineBundle {
         $script:Bundle.PLUGIN_COMMIT -ne $script:Versions.PLUGIN_COMMIT) {
         Throw-InstallerError 'Offline bundle plugin metadata does not match versions.env'
     }
+    if ($script:Bundle.TRAINING_DATASET_COMMIT -ne $script:Versions.TRAINING_DATASET_COMMIT -or
+        $script:Bundle.TRAINING_DATASET_ARCHIVE_SHA256 -ne $script:Versions.TRAINING_DATASET_ARCHIVE_SHA256) {
+        Throw-InstallerError 'Offline bundle training dataset metadata does not match versions.env'
+    }
 
     $comparisons = @{
         INVENTREE_IMAGE = 'INVENTREE_RUNTIME_IMAGE'
@@ -1385,7 +1418,7 @@ function Initialize-OfflineBundle {
         }
     }
 
-    foreach ($coveredPath in @($script:Bundle.IMAGES_ARCHIVE, $script:Bundle.WSL_INSTALLER, $script:Bundle.DOCKER_DESKTOP_INSTALLER, 'cache/plugin-source.tar.gz')) {
+    foreach ($coveredPath in @($script:Bundle.IMAGES_ARCHIVE, $script:Bundle.WSL_INSTALLER, $script:Bundle.DOCKER_DESKTOP_INSTALLER, 'cache/plugin-source.tar.gz', 'cache/training-dataset.tar.gz')) {
         if (-not $checksumEntries.ContainsKey($coveredPath)) {
             Throw-InstallerError "SHA256SUMS does not cover required bundle file: $coveredPath"
         }
@@ -1438,22 +1471,33 @@ function Assert-VersionManifest {
         'CADDY_SOURCE', 'CADDY_RUNTIME_IMAGE', 'PLUGIN_VERSION', 'PLUGIN_COMMIT',
         'PLUGIN_ARCHIVE_URL', 'PLUGIN_ARCHIVE_SHA256', 'PLUGIN_ARCHIVE_SUBDIRECTORY',
         'STOCK_PLUGIN_VERSION', 'STOCK_PLUGIN_ARCHIVE_SUBDIRECTORY',
+        'TRAINING_DATASET_COMMIT', 'TRAINING_DATASET_ARCHIVE_URL',
+        'TRAINING_DATASET_ARCHIVE_SHA256', 'TRAINING_USD_IRT_RATE',
         'DOCKER_DESKTOP_VERSION',
         'DOCKER_DESKTOP_BUILD', 'DOCKER_DESKTOP_URL', 'DOCKER_DESKTOP_SHA256',
         'WSL_VERSION', 'WSL_URL', 'WSL_SHA256'
     )
-    $allowedKeys = $requiredKeys + @('PLUGIN_ARCHIVE_NAME')
+    $allowedKeys = $requiredKeys + @('PLUGIN_ARCHIVE_NAME', 'TRAINING_DATASET_ARCHIVE_NAME')
     Assert-RequiredKeys -Values $script:Versions -SourceName 'versions.env' -Keys $requiredKeys
     Assert-OnlyKeys -Values $script:Versions -SourceName 'versions.env' -Keys $allowedKeys
-    foreach ($hashKey in @('PLUGIN_ARCHIVE_SHA256', 'DOCKER_DESKTOP_SHA256', 'WSL_SHA256')) {
+    foreach ($hashKey in @('PLUGIN_ARCHIVE_SHA256', 'TRAINING_DATASET_ARCHIVE_SHA256', 'DOCKER_DESKTOP_SHA256', 'WSL_SHA256')) {
         if ($script:Versions[$hashKey] -notmatch '^[a-fA-F0-9]{64}$') {
             Throw-InstallerError "Invalid SHA-256 value in versions.env: $hashKey"
         }
     }
-    foreach ($urlKey in @('PLUGIN_ARCHIVE_URL', 'DOCKER_DESKTOP_URL', 'WSL_URL')) {
+    foreach ($urlKey in @('PLUGIN_ARCHIVE_URL', 'TRAINING_DATASET_ARCHIVE_URL', 'DOCKER_DESKTOP_URL', 'WSL_URL')) {
         if ($script:Versions[$urlKey] -notmatch '^https://') {
             Throw-InstallerError "Only HTTPS URLs are allowed in versions.env: $urlKey"
         }
+    }
+    $trainingRate = 0.0
+    if (-not [double]::TryParse(
+        $script:Versions.TRAINING_USD_IRT_RATE,
+        [Globalization.NumberStyles]::AllowDecimalPoint,
+        [Globalization.CultureInfo]::InvariantCulture,
+        [ref]$trainingRate
+    ) -or $trainingRate -le 0) {
+        Throw-InstallerError 'TRAINING_USD_IRT_RATE must be a positive number'
     }
 }
 
@@ -1821,6 +1865,71 @@ function Get-ExistingAdminCount {
     return [int]$lastLine
 }
 
+function Test-TrainingDatabaseEmpty {
+    $output = Invoke-Compose -ArgumentList @(
+        'run', '--rm', '--no-deps', '--entrypoint', 'python', 'inventree-server',
+        'src/backend/InvenTree/manage.py', 'shell', '-c',
+        "from django.apps import apps; from django.contrib.auth import get_user_model; labels = ('part.Part', 'stock.StockItem', 'company.Company', 'build.Build', 'order.PurchaseOrder', 'order.SalesOrder', 'order.ReturnOrder', 'order.TransferOrder'); models = (apps.get_model(label) for label in labels); print('nonempty' if get_user_model().objects.exists() or any(model.objects.exists() for model in models) else 'empty')"
+    ) -CaptureOutput
+    $state = Get-LastOutputLine -Output $output
+    if ($state -notin @('empty', 'nonempty')) {
+        Throw-InstallerError "Could not determine whether the training database is empty: $state"
+    }
+    return $state -eq 'empty'
+}
+
+function Import-TrainingData {
+    $sourceArchive = Join-Path $script:AssetRoot 'cache\training-dataset.tar.gz'
+    Assert-RegularFile -Path $sourceArchive
+    if ((Get-Sha256 -Path $sourceArchive) -ne $script:Versions.TRAINING_DATASET_ARCHIVE_SHA256.ToLowerInvariant()) {
+        Throw-InstallerError 'Training dataset SHA-256 mismatch'
+    }
+    if (-not (Test-TrainingDatabaseEmpty)) {
+        Throw-InstallerError '-TrainingData is only allowed for a new empty database; existing data was not changed'
+    }
+
+    $dataDirectory = Join-Path $InstallDirectory 'inventree-data'
+    $temporaryArchive = Join-Path $dataDirectory ".training-dataset.$([Guid]::NewGuid().ToString('N')).tar.gz"
+    try {
+        [IO.File]::Copy($sourceArchive, $temporaryArchive, $false)
+        if ((Get-Sha256 -Path $temporaryArchive) -ne $script:Versions.TRAINING_DATASET_ARCHIVE_SHA256.ToLowerInvariant()) {
+            Throw-InstallerError 'Copied training dataset SHA-256 mismatch'
+        }
+
+        Write-Step 'Importing comprehensive official InvenTree training data'
+        Invoke-Compose -ArgumentList @(
+            'run', '--rm', '--entrypoint', 'sh', 'inventree-server',
+            '-ceu',
+            'training_dir="$(mktemp -d)"; cleanup_training_dir() { rm -rf -- "$training_dir"; }; trap cleanup_training_dir EXIT; tar -xzf "/home/inventree/data/$1" --strip-components=1 -C "$training_dir"; test -f "$training_dir/inventree_data.json"; test -d "$training_dir/media"; cp -a "$training_dir/media/." /home/inventree/data/media/; invoke import-records --ignore-nonexistent -c -f "$training_dir/inventree_data.json"',
+            '--', (Split-Path -Leaf $temporaryArchive)
+        )
+    }
+    finally {
+        if (Test-Path -LiteralPath $temporaryArchive -PathType Leaf) {
+            Remove-Item -LiteralPath $temporaryArchive -Force
+        }
+    }
+}
+
+function Initialize-TrainingCurrency {
+    $rate = $script:Versions.TRAINING_USD_IRT_RATE
+    Invoke-Compose -ArgumentList @(
+        'run', '--rm', '--entrypoint', 'python', 'inventree-server',
+        'src/backend/InvenTree/manage.py', 'shell', '-c',
+        "from decimal import Decimal; from djmoney.contrib.exchange.models import Rate; from InvenTree.tasks import update_exchange_rates; from plugin.registry import registry; plugin = registry.get_plugin('inventree-usd-irt-exchange-rate'); assert plugin, 'USD/IRT plugin is not active'; plugin.set_setting('API_ENABLED', False); plugin.set_setting('USD_IRT_RATE', '$rate'); update_exchange_rates(force=True); rates = {row.currency: row.value for row in Rate.objects.filter(backend='InvenTreeExchange')}; assert rates.get('USD') == Decimal('1') and rates.get('IRT') == Decimal('$rate'), 'Training exchange rates were not initialized'"
+    )
+}
+
+function Assert-TrainingData {
+    $output = Invoke-Compose -ArgumentList @(
+        'exec', '-T', 'inventree-server', 'python', 'src/backend/InvenTree/manage.py', 'shell', '-c',
+        "from django.apps import apps; from django.contrib.auth import get_user_model; expected = {'part.Part': 438, 'stock.StockItem': 1278, 'part.BomItem': 268, 'part.BomItemSubstitute': 4, 'company.Company': 41, 'company.SupplierPart': 780, 'build.Build': 28, 'order.PurchaseOrder': 20, 'order.SalesOrder': 14, 'order.ReturnOrder': 7, 'order.TransferOrder': 5}; actual = {label: apps.get_model(label).objects.count() for label in expected}; assert actual == expected, f'Training record counts do not match: {actual}'; User = get_user_model(); passwords = {'admin': 'inventree', 'allaccess': 'nolimits', 'reader': 'readonly', 'engineer': 'partsonly'}; assert all(User.objects.get(username=name).check_password(password) for name, password in passwords.items()), 'Training accounts are invalid'; print('ok')"
+    ) -CaptureOutput
+    if ((Get-LastOutputLine -Output $output) -ne 'ok') {
+        Throw-InstallerError 'Training dataset verification failed'
+    }
+}
+
 function Wait-ForApplicationHealth {
     $uri = "http://localhost:$($script:EffectiveHttpPort)/api/system/health/"
     $deadline = (Get-Date).AddMinutes(5)
@@ -1845,6 +1954,11 @@ function Deploy-Application {
     $pluginVersionCommand = "import importlib.metadata as m; print(m.version('inventree-usd-irt-exchange-rate') + '|' + m.version('inventree-stock-xlsx-adjustment'))"
     $expectedPluginVersions = "$($script:Versions.PLUGIN_VERSION)|$($script:Versions.STOCK_PLUGIN_VERSION)"
 
+    $markerPath = Join-Path $InstallDirectory '.installed'
+    if ($TrainingData -and (Test-Path -LiteralPath $markerPath -PathType Leaf)) {
+        Throw-InstallerError '-TrainingData is only allowed during the first installation; existing data was not changed'
+    }
+
     Write-Step 'Validating deployment configuration'
     Invoke-Compose -ArgumentList @('config', '--quiet')
 
@@ -1862,7 +1976,6 @@ function Deploy-Application {
         Throw-InstallerError 'Deployment image does not contain the expected plugin versions'
     }
 
-    $markerPath = Join-Path $InstallDirectory '.installed'
     if (Test-Path -LiteralPath $markerPath) {
         Assert-RegularFile -Path $markerPath
         Protect-SecretFile -Path $markerPath
@@ -1870,8 +1983,11 @@ function Deploy-Application {
         Invoke-Compose -ArgumentList @('run', '--rm', 'inventree-server', 'invoke', 'backup')
     }
 
-    Write-Step 'Applying database migrations and collecting static files'
+    Write-Step 'Applying database migrations'
     Invoke-Compose -ArgumentList @('run', '--rm', 'inventree-server', 'invoke', 'migrate')
+    if ($TrainingData) {
+        Import-TrainingData
+    }
     Write-Step 'Registering mandatory plugins and applying plugin-app migrations'
     Invoke-Compose -ArgumentList @(
         'run', '--rm', '--entrypoint', 'python', 'inventree-server',
@@ -1880,6 +1996,9 @@ function Deploy-Application {
     )
     Invoke-Compose -ArgumentList @('run', '--rm', 'inventree-server', 'invoke', 'static')
     Invoke-Compose -ArgumentList @('run', '--rm', 'inventree-server', 'invoke', 'int.clean-settings')
+    if ($TrainingData) {
+        Initialize-TrainingCurrency
+    }
 
     if (-not $SkipAdmin -and (Get-ExistingAdminCount) -eq 0) {
         Write-Step 'Create the first InvenTree administrator'
@@ -1921,18 +2040,27 @@ function Deploy-Application {
     if ((Get-LastOutputLine -Output $activePlugins) -ne 'active|active') {
         Throw-InstallerError 'One or more required plugins are installed but not active'
     }
+    if ($TrainingData) {
+        Assert-TrainingData
+    }
 
     $marker = @(
         "INSTALLER_FORMAT_VERSION=$($script:Versions.INSTALLER_FORMAT_VERSION)",
         "PLUGIN_VERSION=$($script:Versions.PLUGIN_VERSION)",
         "STOCK_PLUGIN_VERSION=$($script:Versions.STOCK_PLUGIN_VERSION)",
-        "PLUGIN_COMMIT=$($script:Versions.PLUGIN_COMMIT)"
+        "PLUGIN_COMMIT=$($script:Versions.PLUGIN_COMMIT)",
+        "TRAINING_DATA=$($TrainingData.IsPresent.ToString().ToLowerInvariant())",
+        "TRAINING_DATASET_COMMIT=$($script:Versions.TRAINING_DATASET_COMMIT)"
     ) -join "`n"
     Write-ProtectedFileTransactionally -Destination $markerPath -Content ($marker + "`n")
 
     Write-Step "InvenTree is ready at http://localhost:$($script:EffectiveHttpPort)"
     Write-Host "Data and automatic backups: $(Join-Path $InstallDirectory 'inventree-data')"
     Write-Host 'TGJU live updates are disabled by default. Configure the plugin in Admin Center to enable them.'
+    if ($TrainingData) {
+        Write-Host 'Training accounts: admin/inventree, allaccess/nolimits, reader/readonly, engineer/partsonly'
+        Write-Host "Training USD/IRT rate: 1 USD = $($script:Versions.TRAINING_USD_IRT_RATE) IRT (sample only, not a live market quote)."
+    }
 }
 
 function Initialize-Arguments {
@@ -1949,9 +2077,17 @@ function Initialize-Arguments {
     if ($PrepareOnly -and -not [string]::IsNullOrWhiteSpace($OfflineBundle)) {
         Throw-InstallerError '-PrepareOnly creates a new bundle and cannot be combined with -OfflineBundle'
     }
+    if ($PrepareOnly -and $TrainingData) {
+        Throw-InstallerError '-TrainingData deploys a training instance and cannot be combined with -PrepareOnly'
+    }
 
     $script:InstallDirectory = Resolve-AbsolutePath -Path $InstallDirectory
     Assert-NoReparsePath -Path $script:InstallDirectory -Label 'Install directory'
+    $markerPath = Join-Path $script:InstallDirectory '.installed'
+    if ($TrainingData -and (Test-Path -LiteralPath $markerPath)) {
+        Assert-RegularFile -Path $markerPath
+        Throw-InstallerError '-TrainingData is only allowed during the first installation; existing data was not changed'
+    }
 
     if (-not [string]::IsNullOrWhiteSpace($OfflineBundle)) {
         $script:OfflineBundle = Resolve-AbsolutePath -Path $OfflineBundle
@@ -2002,6 +2138,9 @@ function Main {
         }
         else {
             Acquire-ApplicationImages
+            if ($TrainingData -and $NoOfflineCache) {
+                Get-TrainingDatasetOnline | Out-Null
+            }
             if (-not $NoOfflineCache) {
                 Get-OnlineWslInstaller | Out-Null
                 Export-OfflineBundle -LockHandle $exportLock
