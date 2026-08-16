@@ -2102,8 +2102,16 @@ function Initialize-Arguments {
         $script:BundleDirectory = Resolve-AbsolutePath -Path $BundleDirectory
     }
     else {
-        $script:BundleDirectory = Resolve-AbsolutePath -Path (Join-Path $InstallDirectory 'offline-bundle-windows-amd64')
+        $script:BundleDirectory = $null
     }
+}
+
+function Initialize-BundleOutput {
+    if ([string]::IsNullOrWhiteSpace($script:BundleDirectory)) {
+        $directoryName = "offline-bundle-windows-amd64-v$($script:Versions.INSTALLER_FORMAT_VERSION)"
+        $script:BundleDirectory = Resolve-AbsolutePath -Path (Join-Path $InstallDirectory $directoryName)
+    }
+
     Assert-NoReparsePath -Path $script:BundleDirectory -Label 'Bundle output'
     if ($script:BundleDirectory -eq [IO.Path]::GetPathRoot($script:BundleDirectory)) {
         Throw-InstallerError 'Bundle output cannot be a filesystem root'
@@ -2120,6 +2128,7 @@ function Main {
     else {
         $script:Versions = Read-StrictKeyValueFile -Path (Join-Path $script:ScriptDirectory 'versions.env')
         Assert-VersionManifest
+        Initialize-BundleOutput
     }
 
     Ensure-Docker

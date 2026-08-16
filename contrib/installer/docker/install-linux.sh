@@ -318,8 +318,6 @@ parse_arguments() {
     fi
     if [[ -n "$BUNDLE_DIR" ]]; then
         BUNDLE_DIR="$(canonicalize_directory_path "$BUNDLE_DIR" "Bundle output")"
-    else
-        BUNDLE_DIR="${INSTALL_DIR}/offline-bundle"
     fi
 }
 
@@ -1466,6 +1464,9 @@ main() {
         verify_bundle_structure "$OFFLINE_BUNDLE"
     fi
     load_versions "$SCRIPT_DIR/versions.env"
+    if [[ -z "$OFFLINE_BUNDLE" && -z "$BUNDLE_DIR" ]]; then
+        BUNDLE_DIR="${INSTALL_DIR}/offline-bundle-v${INSTALLER_FORMAT_VERSION}"
+    fi
     if [[ -n "$OFFLINE_BUNDLE" ]]; then
         verify_bundle_checksums
     fi

@@ -45,7 +45,7 @@ cd contrib/installer/docker
 
 The default deployment directory is `~/InvenTree`, the site is bound only to
 `http://localhost:8000`, and the reusable bundle is written to
-`~/InvenTree/offline-bundle`. To prepare removable media without deploying:
+`~/InvenTree/offline-bundle-v3`. To prepare removable media without deploying:
 
 ```bash
 ./install-linux.sh \
@@ -113,6 +113,9 @@ Set-ExecutionPolicy -Scope Process Bypass
 .\install-windows.ps1
 ```
 
+The default reusable bundle is written to
+`%USERPROFILE%\InvenTree\offline-bundle-windows-amd64-v3`.
+
 For a new learning instance populated with the comprehensive training fixture:
 
 ```powershell
@@ -157,6 +160,11 @@ Use `Get-Help .\install-windows.ps1 -Detailed` for all parameters.
 Run the platform's `--prepare-only` / `-PrepareOnly` command once on a connected
 preparation computer. Do not copy only the installer script: keep the entire
 generated directory together.
+
+Default bundle directory names include the installer format version. This
+preserves complete older media when a newer format adds required files. If you
+provide `--bundle-dir` / `-BundleDirectory` explicitly, use a new directory
+when moving to another bundle format.
 
 The Linux bundle contains:
 
