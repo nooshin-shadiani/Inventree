@@ -221,6 +221,23 @@ data, secrets, uploaded files, plugin settings, and backups are stored under
 the offline image archive is software installation media, not a backup of your
 inventory.
 
+## Persian language default
+
+New Linux and Windows installations set `INVENTREE_LANGUAGE=fa`, so `fa` is the
+default backend and frontend locale. A user can still select another language
+from the language menu. Existing installations keep their private
+`.env` unchanged; to opt in, add `INVENTREE_LANGUAGE=fa` and recreate the
+server, worker, and proxy containers.
+
+InvenTree uses Django gettext catalogs for backend text and Lingui catalogs for
+its React frontend. The Persian catalogs shipped by the currently pinned
+InvenTree image are incomplete, so untranslated upstream strings fall back to
+English. The current frontend also has no complete right-to-left layout. A
+fully Persian website therefore requires completing both upstream Persian
+catalogs, rebuilding a fork-owned InvenTree base image, adding RTL support, and
+localizing custom plugin interfaces; setting the locale alone cannot provide
+translations which do not exist.
+
 ## Comprehensive training fixture
 
 `--training-data` on Linux and `-TrainingData` on Windows populate a new,
