@@ -27,7 +27,7 @@ export function SettingsHeader({
 
   return (
     <Group justify='space-between'>
-      <Stack gap='0' ml={'sm'}>
+      <Stack gap='0' ms='sm'>
         <Group>
           <StylishText size='xl'>{title}</StylishText>
           {shorthand && <Text c='dimmed'>({shorthand})</Text>}

@@ -16,7 +16,8 @@ import {
   Stack,
   Text,
   TextInput,
-  Tooltip
+  Tooltip,
+  useDirection
 } from '@mantine/core';
 import { useDebouncedValue } from '@mantine/hooks';
 import {
@@ -127,7 +128,7 @@ function QueryResultGroup({
     <Accordion.Item key={query.model} value={query.model}>
       <Accordion.Control component='div'>
         <Group justify='space-between'>
-          <Group justify='left' gap={5} wrap='nowrap'>
+          <Group justify='start' gap={5} wrap='nowrap'>
             <Tooltip label={t`View all results`} position='top-start'>
               <ActionIcon
                 size='sm'
@@ -146,7 +147,7 @@ function QueryResultGroup({
               - {query.results.count} <Trans>results</Trans>
             </Text>
           </Group>
-          <Group justify='right' wrap='nowrap'>
+          <Group justify='end' wrap='nowrap'>
             <Tooltip label={t`Remove search group`} position='top-end'>
               <ActionIcon
                 size='sm'
@@ -204,6 +205,7 @@ export function SearchDrawer({
   opened: boolean;
   onClose: () => void;
 }>) {
+  const { dir } = useDirection();
   const [value, setValue] = useState<string>('');
   const [searchText] = useDebouncedValue(value, 500);
 
@@ -495,7 +497,7 @@ export function SearchDrawer({
       opened={opened}
       size='xl'
       onClose={closeDrawer}
-      position='right'
+      position={dir === 'rtl' ? 'left' : 'right'}
       withCloseButton={false}
       styles={{ header: { width: '100%' }, title: { width: '100%' } }}
       title={

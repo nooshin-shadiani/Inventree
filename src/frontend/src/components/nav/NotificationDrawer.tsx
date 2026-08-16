@@ -11,7 +11,8 @@ import {
   Paper,
   Stack,
   Text,
-  Tooltip
+  Tooltip,
+  useDirection
 } from '@mantine/core';
 import {
   IconArrowRight,
@@ -111,6 +112,7 @@ export function NotificationDrawer({
   opened: boolean;
   onClose: () => void;
 }>) {
+  const { dir } = useDirection();
   const { isLoggedIn } = useUserState();
 
   const navigate = useNavigate();
@@ -165,7 +167,7 @@ export function NotificationDrawer({
     <Drawer
       opened={opened}
       size='md'
-      position='right'
+      position={dir === 'rtl' ? 'left' : 'right'}
       onClose={onClose}
       withCloseButton={false}
       styles={{

@@ -1,5 +1,12 @@
 import { t } from '@lingui/core/macro';
-import { Container, Drawer, Flex, Group, Space } from '@mantine/core';
+import {
+  Container,
+  Drawer,
+  Flex,
+  Group,
+  Space,
+  useDirection
+} from '@mantine/core';
 import { useViewportSize } from '@mantine/hooks';
 import { useEffect, useMemo, useRef, useState } from 'react';
 
@@ -24,11 +31,14 @@ export function NavigationDrawer({
   opened: boolean;
   close: () => void;
 }>) {
+  const { dir } = useDirection();
+
   return (
     <Drawer
       opened={opened}
       onClose={close}
       size='lg'
+      position={dir === 'rtl' ? 'right' : 'left'}
       withCloseButton={false}
       classNames={{
         body: classes.navigationDrawer

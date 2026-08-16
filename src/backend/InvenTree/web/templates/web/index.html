@@ -1,9 +1,13 @@
 {% load spa_helper %}
 {% load inventree_extras %}
+{% load i18n %}
 {% spa_bundle as bundle %}
+{% get_current_language as current_language %}
+{% get_current_language_bidi as current_language_bidi %}
 
 <!DOCTYPE html>
-<html lang="en">
+<html lang="{{ current_language }}"
+      dir="{% if current_language_bidi %}rtl{% else %}ltr{% endif %}">
 
 <head>
   <meta charset="UTF-8" />
