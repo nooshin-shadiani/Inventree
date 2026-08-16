@@ -633,6 +633,7 @@ DEB_ARCH=${DEB_ARCH}"
 
 ensure_docker() {
     if docker_is_usable || sudo_docker_is_usable; then
+        note "Existing Docker Engine and Compose v2 detected; skipping Docker installation"
         return
     fi
 

@@ -802,12 +802,14 @@ function Install-DockerDesktop {
 
 function Ensure-Docker {
     if (Test-DockerUsable) {
+        Write-Step 'Existing Docker Engine and Compose v2 detected; skipping Docker Desktop installation'
         return
     }
 
     if ($null -ne (Get-DockerDesktopExecutable)) {
         Start-DockerDesktop
         if (Test-DockerUsable) {
+            Write-Step 'Existing Docker Engine and Compose v2 detected; skipping Docker Desktop installation'
             return
         }
     }
