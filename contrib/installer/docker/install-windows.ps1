@@ -367,16 +367,111 @@ function Add-DockerToPath {
     $script:DockerCommand = Get-DockerExecutable
 }
 
+function Assert-LocalDockerNamedPipe {
+    param(
+        [Parameter(Mandatory = $true)][string]$Endpoint,
+        [Parameter(Mandatory = $true)][string]$SourceName
+    )
+
+    $allowedEndpoints = @(
+        'npipe:////./pipe/docker_engine',
+        'npipe:////./pipe/dockerDesktopLinuxEngine'
+    )
+    if ($allowedEndpoints -notcontains $Endpoint) {
+        Throw-InstallerError "$SourceName selects a remote or unsupported Docker endpoint: $Endpoint. Use the local Docker Desktop Windows named pipe."
+    }
+}
+
+function Assert-LocalDockerConfiguration {
+    if ([string]::IsNullOrWhiteSpace($script:DockerCommand)) {
+        Throw-InstallerError 'Docker command has not been initialized'
+    }
+
+    foreach ($variableName in @('DOCKER_TLS_VERIFY', 'DOCKER_CERT_PATH')) {
+        $variableValue = [Environment]::GetEnvironmentVariable($variableName)
+        if (-not [string]::IsNullOrWhiteSpace($variableValue)) {
+            Throw-InstallerError "$variableName is set. Remote or TLS Docker endpoints are not supported; use the local Docker Desktop Windows named pipe."
+        }
+    }
+
+    $contextName = $env:DOCKER_CONTEXT
+    if ([string]::IsNullOrWhiteSpace($contextName)) {
+        $contextName = Get-LastOutputLine -Output (
+            Invoke-NativeCommand -FilePath $script:DockerCommand `
+                -ArgumentList @('context', 'show') -CaptureOutput
+        )
+    }
+    if ([string]::IsNullOrWhiteSpace($contextName)) {
+        Throw-InstallerError 'Could not determine the selected Docker context'
+    }
+
+    try {
+        $contextJson = Invoke-NativeCommand -FilePath $script:DockerCommand `
+            -ArgumentList @('context', 'inspect', $contextName) -CaptureOutput
+        $contexts = @($contextJson | ConvertFrom-Json -ErrorAction Stop)
+    }
+    catch {
+        if ($_.Exception.Message.StartsWith('Installer error:')) {
+            throw
+        }
+        Throw-InstallerError "Could not inspect Docker context '$contextName': $($_.Exception.Message)"
+    }
+    if ($contexts.Count -ne 1 -or $null -eq $contexts[0].Endpoints) {
+        Throw-InstallerError "Docker context '$contextName' has no unambiguous endpoint configuration"
+    }
+    $dockerEndpointProperty = $contexts[0].Endpoints.PSObject.Properties['docker']
+    if ($null -eq $dockerEndpointProperty -or
+        $null -eq $dockerEndpointProperty.Value -or
+        [string]::IsNullOrWhiteSpace([string]$dockerEndpointProperty.Value.Host)) {
+        Throw-InstallerError "Docker context '$contextName' has no Docker endpoint"
+    }
+    Assert-LocalDockerNamedPipe `
+        -Endpoint ([string]$dockerEndpointProperty.Value.Host) `
+        -SourceName "Docker context '$contextName'"
+
+    if (-not [string]::IsNullOrWhiteSpace($env:DOCKER_HOST)) {
+        Assert-LocalDockerNamedPipe -Endpoint $env:DOCKER_HOST -SourceName 'DOCKER_HOST'
+    }
+}
+
+function Assert-DockerComposeVersion {
+    $versionText = Get-LastOutputLine -Output (
+        Invoke-NativeCommand -FilePath $script:DockerCommand `
+            -ArgumentList @('compose', 'version', '--short') -CaptureOutput
+    )
+    if ($versionText -notmatch '^v?(\d+)\.(\d+)\.(\d+)(?:[-+][0-9A-Za-z.-]+)?$') {
+        Throw-InstallerError "Could not parse Docker Compose version: $versionText"
+    }
+    try {
+        $composeVersion = [Version]::new(
+            [int]$Matches[1],
+            [int]$Matches[2],
+            [int]$Matches[3]
+        )
+    }
+    catch {
+        Throw-InstallerError "Docker Compose reported an invalid version: $versionText"
+    }
+    if ($composeVersion -lt [Version]'2.17.0') {
+        Throw-InstallerError "Docker Compose 2.17.0 or newer is required (reported: $versionText)"
+    }
+}
+
 function Test-DockerUsable {
     Add-DockerToPath
     if ([string]::IsNullOrWhiteSpace($script:DockerCommand)) {
         return $false
     }
 
+    Assert-LocalDockerConfiguration
     if (-not (Test-NativeCommand -FilePath $script:DockerCommand -ArgumentList @('info'))) {
         return $false
     }
-    return Test-NativeCommand -FilePath $script:DockerCommand -ArgumentList @('compose', 'version')
+    if (-not (Test-NativeCommand -FilePath $script:DockerCommand -ArgumentList @('compose', 'version'))) {
+        return $false
+    }
+    Assert-DockerComposeVersion
+    return $true
 }
 
 function Get-DockerDesktopExecutable {
@@ -450,24 +545,34 @@ function Assert-WindowsHost {
     }
 
     try {
-        $operatingSystem = Get-CimInstance Win32_OperatingSystem
-        $caption = [string]$operatingSystem.Caption
-        $build = [int]$operatingSystem.BuildNumber
-        if ($caption -match 'Server') {
-            Throw-InstallerError 'Docker Desktop does not support Windows Server'
-        }
-        if ($caption -match 'Windows 10' -and $build -lt 19045) {
-            Throw-InstallerError 'Docker Desktop requires Windows 10 22H2 build 19045 or newer'
-        }
-        if ($caption -match 'Windows 11' -and $build -lt 22631) {
-            Throw-InstallerError 'Docker Desktop requires Windows 11 23H2 build 22631 or newer'
-        }
+        $operatingSystems = @(Get-CimInstance Win32_OperatingSystem -ErrorAction Stop)
     }
     catch {
-        if ($_.Exception.Message.StartsWith('Installer error:')) {
-            throw
-        }
-        Write-Warning "Could not confirm the Windows release: $($_.Exception.Message)"
+        Throw-InstallerError "Could not confirm the Windows release: $($_.Exception.Message)"
+    }
+    if ($operatingSystems.Count -ne 1) {
+        Throw-InstallerError 'Could not identify exactly one Windows operating system installation'
+    }
+
+    $operatingSystem = $operatingSystems[0]
+    $build = 0
+    $productType = 0
+    if (-not [int]::TryParse([string]$operatingSystem.BuildNumber, [ref]$build) -or
+        -not [int]::TryParse([string]$operatingSystem.ProductType, [ref]$productType)) {
+        Throw-InstallerError 'Windows release information is incomplete or invalid'
+    }
+    if ($productType -ne 1) {
+        Throw-InstallerError 'Docker Desktop requires a Windows workstation edition; Windows Server and domain controllers are not supported'
+    }
+
+    if ($build -ge 19045 -and $build -lt 22000) {
+        # Supported Windows 10 workstation build.
+    }
+    elseif ($build -ge 22631) {
+        # Supported Windows 11 workstation build.
+    }
+    else {
+        Throw-InstallerError "Unsupported Windows workstation build: $build. Windows 10 build 19045 or Windows 11 build 22631 or newer is required."
     }
 }
 
@@ -538,6 +643,100 @@ function Save-OnlineFile {
             Remove-Item -LiteralPath $temporary -Force
         }
     }
+}
+
+function Save-HttpsFile {
+    param(
+        [Parameter(Mandatory = $true)][string]$Uri,
+        [Parameter(Mandatory = $true)][string]$Destination
+    )
+
+    if (-not [string]::IsNullOrWhiteSpace($OfflineBundle)) {
+        Throw-InstallerError "Strict offline mode refused a network download: $Uri"
+    }
+
+    $parsedUri = $null
+    if (-not [Uri]::TryCreate($Uri, [UriKind]::Absolute, [ref]$parsedUri) -or
+        $parsedUri.Scheme -cne 'https') {
+        Throw-InstallerError "Only HTTPS downloads are allowed: $Uri"
+    }
+
+    $curl = Get-Command curl.exe -CommandType Application -ErrorAction SilentlyContinue |
+        Select-Object -First 1
+    if ($null -eq $curl) {
+        Throw-InstallerError 'The Windows curl.exe HTTPS client is required to download InvenTree source'
+    }
+
+    $parent = Split-Path -Parent $Destination
+    Assert-RealDirectory -Path $parent -Label 'Download cache directory' -Create
+    Assert-NoReparsePath -Path $parent -Label 'Download cache directory'
+    $temporary = Join-Path $parent ".$([IO.Path]::GetFileName($Destination)).$([Guid]::NewGuid().ToString('N')).download"
+
+    try {
+        Invoke-NativeCommand -FilePath $curl.Source -ArgumentList @(
+            '--fail', '--location', '--silent', '--show-error',
+            '--proto', '=https', '--proto-redir', '=https',
+            '--output', $temporary, '--', $Uri
+        )
+        Assert-RegularFile -Path $temporary
+        if (Test-Path -LiteralPath $Destination) {
+            Throw-InstallerError "Download destination changed unexpectedly: $Destination"
+        }
+        Move-Item -LiteralPath $temporary -Destination $Destination
+        Assert-RegularFile -Path $Destination
+    }
+    finally {
+        if (Test-Path -LiteralPath $temporary) {
+            Assert-RegularFile -Path $temporary
+            Remove-Item -LiteralPath $temporary -Force
+        }
+    }
+}
+
+function New-SafeTemporaryDirectory {
+    param([Parameter(Mandatory = $true)][string]$Prefix)
+
+    if ($Prefix -notmatch '^[A-Za-z0-9._-]+$') {
+        Throw-InstallerError "Invalid temporary directory prefix: $Prefix"
+    }
+
+    $temporaryRoot = [IO.Path]::GetFullPath([IO.Path]::GetTempPath()).TrimEnd('\', '/')
+    Assert-RealDirectory -Path $temporaryRoot -Label 'Temporary directory root'
+    Assert-NoReparsePath -Path $temporaryRoot -Label 'Temporary directory root'
+
+    for ($attempt = 0; $attempt -lt 10; $attempt++) {
+        $candidate = Join-Path $temporaryRoot "$Prefix-$([Guid]::NewGuid().ToString('N'))"
+        try {
+            New-Item -ItemType Directory -Path $candidate -ErrorAction Stop | Out-Null
+            Assert-RealDirectory -Path $candidate -Label 'Private temporary directory'
+            Assert-NoReparsePath -Path $candidate -Label 'Private temporary directory'
+            return $candidate
+        }
+        catch {
+            if (Test-Path -LiteralPath $candidate) {
+                throw
+            }
+        }
+    }
+
+    Throw-InstallerError 'Could not create a private temporary directory'
+}
+
+function Remove-SafeTemporaryDirectory {
+    param([Parameter(Mandatory = $true)][string]$Path)
+
+    if (-not (Test-Path -LiteralPath $Path)) {
+        return
+    }
+
+    $temporaryRoot = [IO.Path]::GetFullPath([IO.Path]::GetTempPath()).TrimEnd('\', '/')
+    if (-not (Test-PathWithin -Candidate $Path -Parent $temporaryRoot) -or
+        (Resolve-AbsolutePath -Path $Path) -eq $temporaryRoot) {
+        Throw-InstallerError "Refusing to remove a non-temporary directory: $Path"
+    }
+
+    Assert-NoReparseTree -Root $Path -Label 'Private temporary directory'
+    Remove-Item -LiteralPath $Path -Recurse -Force
 }
 
 function Get-OnlineWslInstaller {
@@ -836,6 +1035,7 @@ function Ensure-Docker {
 }
 
 function Assert-DockerPlatform {
+    Assert-LocalDockerConfiguration
     $operatingSystem = (Invoke-Docker -ArgumentList @('info', '--format', '{{.OSType}}') -CaptureOutput).Trim()
     $architecture = (Invoke-Docker -ArgumentList @('info', '--format', '{{.Architecture}}') -CaptureOutput).Trim()
     if ($operatingSystem -ne 'linux') {
@@ -844,7 +1044,170 @@ function Assert-DockerPlatform {
     if (@('amd64', 'x86_64') -notcontains $architecture) {
         Throw-InstallerError "Docker Desktop must provide linux/amd64 images (reported: $architecture)"
     }
-    Invoke-Docker -ArgumentList @('compose', 'version')
+    Assert-DockerComposeVersion
+}
+
+function Get-InventreeSourceOnline {
+    $cacheDirectory = Join-Path $script:ScriptDirectory 'cache'
+    Assert-RealDirectory -Path $cacheDirectory -Label 'InvenTree source cache' -Create
+    Assert-NoReparsePath -Path $cacheDirectory -Label 'InvenTree source cache'
+    $destination = Join-Path $cacheDirectory 'inventree-source.tar.gz'
+
+    if (Test-Path -LiteralPath $destination) {
+        Assert-RegularFile -Path $destination
+        if ((Get-Sha256 -Path $destination) -ne
+            $script:Versions.INVENTREE_SOURCE_ARCHIVE_SHA256.ToLowerInvariant()) {
+            Remove-Item -LiteralPath $destination -Force
+        }
+    }
+    if (-not (Test-Path -LiteralPath $destination -PathType Leaf)) {
+        Write-Step "Downloading pinned InvenTree fork source $($script:Versions.INVENTREE_SOURCE_COMMIT)"
+        Save-HttpsFile -Uri $script:Versions.INVENTREE_SOURCE_ARCHIVE_URL `
+            -Destination $destination
+    }
+
+    Assert-RegularFile -Path $destination
+    if ((Get-Sha256 -Path $destination) -ne
+        $script:Versions.INVENTREE_SOURCE_ARCHIVE_SHA256.ToLowerInvariant()) {
+        Throw-InstallerError 'InvenTree source archive SHA-256 mismatch'
+    }
+    return $destination
+}
+
+function Assert-InventreeSourceArchive {
+    param([Parameter(Mandatory = $true)][string]$SourceArchive)
+
+    Assert-RegularFile -Path $SourceArchive
+    if ((Get-Sha256 -Path $SourceArchive) -ne
+        $script:Versions.INVENTREE_SOURCE_ARCHIVE_SHA256.ToLowerInvariant()) {
+        Throw-InstallerError 'InvenTree source archive SHA-256 mismatch'
+    }
+
+    $tar = Get-Command tar.exe -CommandType Application -ErrorAction SilentlyContinue |
+        Select-Object -First 1
+    if ($null -eq $tar) {
+        Throw-InstallerError 'The Windows tar.exe archive tool is required to build InvenTree'
+    }
+
+    $expectedRoot = "InvenTree-$($script:Versions.INVENTREE_SOURCE_COMMIT)"
+    $listing = Invoke-NativeCommand -FilePath $tar.Source `
+        -ArgumentList @('-tzf', $SourceArchive) -CaptureOutput
+    $members = @($listing -split "`r?`n")
+    if ($members.Count -eq 0 -or
+        ($members.Count -eq 1 -and [string]::IsNullOrWhiteSpace($members[0]))) {
+        Throw-InstallerError 'InvenTree source archive is empty'
+    }
+
+    $seenMembers = @{}
+    foreach ($member in $members) {
+        if ([string]::IsNullOrWhiteSpace($member) -or
+            $member -notmatch '^[A-Za-z0-9_./@+,=-]+$') {
+            Throw-InstallerError 'InvenTree source archive contains an unsafe path'
+        }
+        if ($member -ne "$expectedRoot/" -and
+            -not $member.StartsWith("$expectedRoot/", [StringComparison]::Ordinal)) {
+            Throw-InstallerError "InvenTree source archive does not match commit $($script:Versions.INVENTREE_SOURCE_COMMIT)"
+        }
+        if ($member.Contains('//') -or $member.Contains('\')) {
+            Throw-InstallerError "InvenTree source archive contains an invalid path: $member"
+        }
+
+        $normalizedMember = $member.TrimEnd('/')
+        if ($seenMembers.ContainsKey($normalizedMember)) {
+            Throw-InstallerError "InvenTree source archive contains a case-insensitive path collision: $member"
+        }
+        $seenMembers[$normalizedMember] = $true
+
+        $components = @($member.TrimEnd('/').Split('/'))
+        foreach ($component in $components) {
+            if ([string]::IsNullOrWhiteSpace($component) -or
+                $component -eq '.' -or $component -eq '..') {
+                Throw-InstallerError "InvenTree source archive contains a path traversal: $member"
+            }
+            if ($component.EndsWith('.') -or
+                $component -match '^(?i:CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])(?:\.|$)') {
+                Throw-InstallerError "InvenTree source archive contains a Windows-special path: $member"
+            }
+        }
+    }
+
+    $verboseListing = Invoke-NativeCommand -FilePath $tar.Source `
+        -ArgumentList @('-tvzf', $SourceArchive) -CaptureOutput
+    $verboseMembers = @($verboseListing -split "`r?`n")
+    if ($verboseMembers.Count -ne $members.Count) {
+        Throw-InstallerError 'InvenTree source archive has an ambiguous member listing'
+    }
+    foreach ($entry in $verboseMembers) {
+        if ([string]::IsNullOrWhiteSpace($entry) -or
+            @('-', 'd') -notcontains $entry.Substring(0, 1)) {
+            Throw-InstallerError 'InvenTree source archive contains a link or special file'
+        }
+    }
+}
+
+function Expand-InventreeSourceArchive {
+    param(
+        [Parameter(Mandatory = $true)][string]$SourceArchive,
+        [Parameter(Mandatory = $true)][string]$Destination
+    )
+
+    Assert-InventreeSourceArchive -SourceArchive $SourceArchive
+    Assert-RealDirectory -Path $Destination -Label 'InvenTree source build context'
+    if ($null -ne (Get-ChildItem -LiteralPath $Destination -Force | Select-Object -First 1)) {
+        Throw-InstallerError "InvenTree source build context is not empty: $Destination"
+    }
+
+    $tar = Get-Command tar.exe -CommandType Application -ErrorAction SilentlyContinue |
+        Select-Object -First 1
+    Invoke-NativeCommand -FilePath $tar.Source -ArgumentList @(
+        '-xzf', $SourceArchive, '-C', $Destination, '--strip-components=1'
+    )
+
+    Assert-NoReparseTree -Root $Destination -Label 'Extracted InvenTree source'
+    $dockerfile = Join-Path (Join-Path (Join-Path $Destination 'contrib') 'container') 'Dockerfile'
+    Assert-RegularFile -Path $dockerfile
+}
+
+function Assert-InventreeSourceRevision {
+    param(
+        [Parameter(Mandatory = $true)][string]$Reference,
+        [Parameter(Mandatory = $true)][string]$Label
+    )
+
+    $revision = (Invoke-Docker -ArgumentList @(
+        'image', 'inspect', $Reference, '--format',
+        '{{ index .Config.Labels "org.opencontainers.image.revision" }}'
+    ) -CaptureOutput).Trim()
+    if ($revision -cne $script:Versions.INVENTREE_SOURCE_COMMIT) {
+        Throw-InstallerError "$Label source revision mismatch: expected $($script:Versions.INVENTREE_SOURCE_COMMIT), got $revision"
+    }
+}
+
+function Build-InventreeBaseImage {
+    param([Parameter(Mandatory = $true)][string]$SourceArchive)
+
+    $buildContext = New-SafeTemporaryDirectory -Prefix 'inventree-source-build'
+    try {
+        Expand-InventreeSourceArchive -SourceArchive $SourceArchive -Destination $buildContext
+        $dockerfile = Join-Path (Join-Path (Join-Path $buildContext 'contrib') 'container') 'Dockerfile'
+        $commitTag = $script:Versions.INVENTREE_SOURCE_COMMIT.Substring(0, 12)
+        Write-Step "Building pinned InvenTree fork commit $($script:Versions.INVENTREE_SOURCE_COMMIT)"
+        Invoke-Docker -ArgumentList @(
+            'build',
+            '--platform', 'linux/amd64',
+            '--file', $dockerfile,
+            '--target', 'production',
+            '--build-arg', "commit_hash=$($script:Versions.INVENTREE_SOURCE_COMMIT)",
+            '--build-arg', "commit_tag=$commitTag",
+            '--tag', $script:Versions.INVENTREE_BASE_SOURCE,
+            $buildContext
+        )
+        Assert-InventreeSourceRevision -Reference $script:Versions.INVENTREE_BASE_SOURCE `
+            -Label 'Built InvenTree base image'
+    }
+    finally {
+        Remove-SafeTemporaryDirectory -Path $buildContext
+    }
 }
 
 function Get-PluginSourceOnline {
@@ -923,10 +1286,12 @@ function Assert-PluginImageVersions {
 }
 
 function Acquire-ApplicationImages {
+    $inventreeSource = Get-InventreeSourceOnline
     $pluginSource = Get-PluginSourceOnline
-    Write-Step 'Pulling pinned InvenTree stack images'
+    Build-InventreeBaseImage -SourceArchive $inventreeSource
+
+    Write-Step 'Pulling pinned database, cache, and proxy images'
     foreach ($source in @(
-        $script:Versions.INVENTREE_BASE_SOURCE,
         $script:Versions.POSTGRES_SOURCE,
         $script:Versions.REDIS_SOURCE,
         $script:Versions.CADDY_SOURCE
@@ -938,7 +1303,7 @@ function Acquire-ApplicationImages {
     Invoke-Docker -ArgumentList @('tag', $script:Versions.REDIS_SOURCE, $script:Versions.REDIS_RUNTIME_IMAGE)
     Invoke-Docker -ArgumentList @('tag', $script:Versions.CADDY_SOURCE, $script:Versions.CADDY_RUNTIME_IMAGE)
 
-    $buildContext = Join-Path ([IO.Path]::GetTempPath()) "inventree-plugin-build-$([Guid]::NewGuid().ToString('N'))"
+    $buildContext = New-SafeTemporaryDirectory -Prefix 'inventree-plugin-build'
     try {
         New-Item -ItemType Directory -Path (Join-Path $buildContext 'cache') -Force | Out-Null
         Copy-Item -LiteralPath (Join-Path $script:ScriptDirectory 'Dockerfile') -Destination (Join-Path $buildContext 'Dockerfile')
@@ -959,9 +1324,7 @@ function Acquire-ApplicationImages {
         )
     }
     finally {
-        if (Test-Path -LiteralPath $buildContext -PathType Container) {
-            Remove-Item -LiteralPath $buildContext -Recurse -Force
-        }
+        Remove-SafeTemporaryDirectory -Path $buildContext
     }
 
     foreach ($image in @(
@@ -972,6 +1335,8 @@ function Acquire-ApplicationImages {
     )) {
         Assert-ImagePlatform -Reference $image
     }
+    Assert-InventreeSourceRevision -Reference $script:Versions.INVENTREE_RUNTIME_IMAGE `
+        -Label 'Built InvenTree plugin image'
     Assert-PluginImageVersions -Reference $script:Versions.INVENTREE_RUNTIME_IMAGE
     Set-DeploymentImageIds `
         -InventreeImage $script:Versions.INVENTREE_RUNTIME_IMAGE `
@@ -995,6 +1360,9 @@ function Write-BundleManifest {
         'IMAGES_ARCHIVE=images.tar',
         "INVENTREE_IMAGE=$($script:Versions.INVENTREE_RUNTIME_IMAGE)",
         "INVENTREE_IMAGE_ID=$($ImageIds.INVENTREE_IMAGE_ID)",
+        "INVENTREE_SOURCE_COMMIT=$($script:Versions.INVENTREE_SOURCE_COMMIT)",
+        "INVENTREE_SOURCE_ARCHIVE_NAME=$($script:Versions.INVENTREE_SOURCE_ARCHIVE_NAME)",
+        "INVENTREE_SOURCE_ARCHIVE_SHA256=$($script:Versions.INVENTREE_SOURCE_ARCHIVE_SHA256)",
         "POSTGRES_IMAGE=$($script:Versions.POSTGRES_RUNTIME_IMAGE)",
         "POSTGRES_IMAGE_ID=$($ImageIds.POSTGRES_IMAGE_ID)",
         "REDIS_IMAGE=$($script:Versions.REDIS_RUNTIME_IMAGE)",
@@ -1144,6 +1512,9 @@ function Assert-WindowsBundleIdentity {
         IMAGE_PLATFORM = 'linux/amd64'
         IMAGES_ARCHIVE = 'images.tar'
         INVENTREE_IMAGE = $script:Versions.INVENTREE_RUNTIME_IMAGE
+        INVENTREE_SOURCE_COMMIT = $script:Versions.INVENTREE_SOURCE_COMMIT
+        INVENTREE_SOURCE_ARCHIVE_NAME = $script:Versions.INVENTREE_SOURCE_ARCHIVE_NAME
+        INVENTREE_SOURCE_ARCHIVE_SHA256 = $script:Versions.INVENTREE_SOURCE_ARCHIVE_SHA256
         POSTGRES_IMAGE = $script:Versions.POSTGRES_RUNTIME_IMAGE
         REDIS_IMAGE = $script:Versions.REDIS_RUNTIME_IMAGE
         CADDY_IMAGE = $script:Versions.CADDY_RUNTIME_IMAGE
@@ -1155,6 +1526,14 @@ function Assert-WindowsBundleIdentity {
         if (-not $manifest.ContainsKey($key) -or $manifest[$key] -ne $expectedManifest[$key]) {
             Throw-InstallerError "Existing bundle manifest differs at $key"
         }
+    }
+
+    $sourceArchive = Resolve-BundlePath -Root $Root `
+        -RelativePath 'cache/inventree-source.tar.gz'
+    Assert-RegularFile -Path $sourceArchive
+    if ((Get-Sha256 -Path $sourceArchive) -ne
+        $script:Versions.INVENTREE_SOURCE_ARCHIVE_SHA256.ToLowerInvariant()) {
+        Throw-InstallerError 'Existing bundle InvenTree source archive SHA-256 mismatch'
     }
 }
 
@@ -1200,6 +1579,7 @@ function Export-OfflineBundle {
         Get-OnlineWslInstaller | Out-Null
     }
     $dockerInstaller = Get-OnlineDockerDesktopInstaller
+    $inventreeSource = Get-InventreeSourceOnline
     $trainingDataset = Get-TrainingDatasetOnline
 
     if ($BundleDirectory -eq $InstallDirectory -or $BundleDirectory -eq $script:ScriptDirectory) {
@@ -1212,7 +1592,8 @@ function Export-OfflineBundle {
     $dockerName = "DockerDesktop-$($script:Versions.DOCKER_DESKTOP_VERSION)-$($script:Versions.DOCKER_DESKTOP_BUILD)-x64.exe"
     $expectedFiles = @(
         'compose.yaml', 'Caddyfile', 'env.template', 'Dockerfile', 'versions.env',
-        'install-windows.ps1', 'cache/plugin-source.tar.gz', 'cache/training-dataset.tar.gz',
+        'install-windows.ps1', 'cache/inventree-source.tar.gz',
+        'cache/plugin-source.tar.gz', 'cache/training-dataset.tar.gz',
         "prerequisites/windows/$wslName", "prerequisites/windows/$dockerName",
         'DOCKER-DESKTOP-LICENSE.txt',
         'images.tar', 'bundle.env', 'SHA256SUMS'
@@ -1289,6 +1670,8 @@ function Export-OfflineBundle {
         if (Test-Path -LiteralPath $readme -PathType Leaf) {
             Copy-Item -LiteralPath $readme -Destination (Join-Path $staging 'README.md')
         }
+        Copy-Item -LiteralPath $inventreeSource `
+            -Destination (Join-Path $staging 'cache\inventree-source.tar.gz')
         Copy-Item -LiteralPath (Join-Path $script:ScriptDirectory 'cache\plugin-source.tar.gz') `
             -Destination (Join-Path $staging 'cache\plugin-source.tar.gz')
         Copy-Item -LiteralPath $trainingDataset `
@@ -1383,6 +1766,8 @@ function Initialize-OfflineBundle {
     $bundleKeys = @(
         'INSTALLER_FORMAT_VERSION', 'HOST_PLATFORM', 'IMAGE_PLATFORM', 'IMAGES_ARCHIVE',
         'INVENTREE_IMAGE', 'INVENTREE_IMAGE_ID', 'POSTGRES_IMAGE', 'POSTGRES_IMAGE_ID',
+        'INVENTREE_SOURCE_COMMIT', 'INVENTREE_SOURCE_ARCHIVE_NAME',
+        'INVENTREE_SOURCE_ARCHIVE_SHA256',
         'REDIS_IMAGE', 'REDIS_IMAGE_ID', 'CADDY_IMAGE', 'CADDY_IMAGE_ID',
         'PLUGIN_VERSION', 'STOCK_PLUGIN_VERSION', 'PLUGIN_COMMIT',
         'TRAINING_DATASET_COMMIT', 'TRAINING_DATASET_ARCHIVE_SHA256',
@@ -1402,6 +1787,11 @@ function Initialize-OfflineBundle {
         $script:Bundle.PLUGIN_COMMIT -ne $script:Versions.PLUGIN_COMMIT) {
         Throw-InstallerError 'Offline bundle plugin metadata does not match versions.env'
     }
+    if ($script:Bundle.INVENTREE_SOURCE_COMMIT -ne $script:Versions.INVENTREE_SOURCE_COMMIT -or
+        $script:Bundle.INVENTREE_SOURCE_ARCHIVE_NAME -ne $script:Versions.INVENTREE_SOURCE_ARCHIVE_NAME -or
+        $script:Bundle.INVENTREE_SOURCE_ARCHIVE_SHA256 -ne $script:Versions.INVENTREE_SOURCE_ARCHIVE_SHA256) {
+        Throw-InstallerError 'Offline bundle InvenTree source metadata does not match versions.env'
+    }
     if ($script:Bundle.TRAINING_DATASET_COMMIT -ne $script:Versions.TRAINING_DATASET_COMMIT -or
         $script:Bundle.TRAINING_DATASET_ARCHIVE_SHA256 -ne $script:Versions.TRAINING_DATASET_ARCHIVE_SHA256) {
         Throw-InstallerError 'Offline bundle training dataset metadata does not match versions.env'
@@ -1420,10 +1810,24 @@ function Initialize-OfflineBundle {
         }
     }
 
-    foreach ($coveredPath in @($script:Bundle.IMAGES_ARCHIVE, $script:Bundle.WSL_INSTALLER, $script:Bundle.DOCKER_DESKTOP_INSTALLER, 'cache/plugin-source.tar.gz', 'cache/training-dataset.tar.gz')) {
+    foreach ($coveredPath in @(
+        $script:Bundle.IMAGES_ARCHIVE,
+        $script:Bundle.WSL_INSTALLER,
+        $script:Bundle.DOCKER_DESKTOP_INSTALLER,
+        'cache/inventree-source.tar.gz',
+        'cache/plugin-source.tar.gz',
+        'cache/training-dataset.tar.gz'
+    )) {
         if (-not $checksumEntries.ContainsKey($coveredPath)) {
             Throw-InstallerError "SHA256SUMS does not cover required bundle file: $coveredPath"
         }
+    }
+    $sourceArchive = Resolve-BundlePath -Root $OfflineBundle `
+        -RelativePath 'cache/inventree-source.tar.gz'
+    Assert-RegularFile -Path $sourceArchive
+    if ((Get-Sha256 -Path $sourceArchive) -ne
+        $script:Versions.INVENTREE_SOURCE_ARCHIVE_SHA256.ToLowerInvariant()) {
+        Throw-InstallerError 'Bundled InvenTree source archive SHA-256 mismatch'
     }
     Assert-BundleFileInventory -Root $OfflineBundle -ChecksumEntries $checksumEntries `
         -AllowedUnlistedPaths @()
@@ -1458,6 +1862,8 @@ function Load-OfflineImages {
     Verify-LoadedImage -Reference $script:Bundle.POSTGRES_IMAGE_ID -ExpectedId $script:Bundle.POSTGRES_IMAGE_ID
     Verify-LoadedImage -Reference $script:Bundle.REDIS_IMAGE_ID -ExpectedId $script:Bundle.REDIS_IMAGE_ID
     Verify-LoadedImage -Reference $script:Bundle.CADDY_IMAGE_ID -ExpectedId $script:Bundle.CADDY_IMAGE_ID
+    Assert-InventreeSourceRevision -Reference $script:Bundle.INVENTREE_IMAGE_ID `
+        -Label 'Bundled InvenTree image'
     Assert-PluginImageVersions -Reference $script:Bundle.INVENTREE_IMAGE_ID
 
     $script:InventreeDeployImage = $script:Bundle.INVENTREE_IMAGE_ID
@@ -1469,6 +1875,9 @@ function Load-OfflineImages {
 function Assert-VersionManifest {
     $requiredKeys = @(
         'INSTALLER_FORMAT_VERSION', 'INVENTREE_BASE_SOURCE', 'INVENTREE_RUNTIME_IMAGE',
+        'INVENTREE_SOURCE_COMMIT', 'INVENTREE_SOURCE_ARCHIVE_NAME',
+        'INVENTREE_SOURCE_ARCHIVE_URL', 'INVENTREE_SOURCE_ARCHIVE_SHA256',
+        'INVENTREE_PREVIOUS_IMAGE_IDS',
         'POSTGRES_SOURCE', 'POSTGRES_RUNTIME_IMAGE', 'REDIS_SOURCE', 'REDIS_RUNTIME_IMAGE',
         'CADDY_SOURCE', 'CADDY_RUNTIME_IMAGE', 'PLUGIN_VERSION', 'PLUGIN_COMMIT',
         'PLUGIN_ARCHIVE_URL', 'PLUGIN_ARCHIVE_SHA256', 'PLUGIN_ARCHIVE_SUBDIRECTORY',
@@ -1482,15 +1891,43 @@ function Assert-VersionManifest {
     $allowedKeys = $requiredKeys + @('PLUGIN_ARCHIVE_NAME', 'TRAINING_DATASET_ARCHIVE_NAME')
     Assert-RequiredKeys -Values $script:Versions -SourceName 'versions.env' -Keys $requiredKeys
     Assert-OnlyKeys -Values $script:Versions -SourceName 'versions.env' -Keys $allowedKeys
-    foreach ($hashKey in @('PLUGIN_ARCHIVE_SHA256', 'TRAINING_DATASET_ARCHIVE_SHA256', 'DOCKER_DESKTOP_SHA256', 'WSL_SHA256')) {
+    foreach ($hashKey in @(
+        'INVENTREE_SOURCE_ARCHIVE_SHA256', 'PLUGIN_ARCHIVE_SHA256',
+        'TRAINING_DATASET_ARCHIVE_SHA256', 'DOCKER_DESKTOP_SHA256', 'WSL_SHA256'
+    )) {
         if ($script:Versions[$hashKey] -notmatch '^[a-fA-F0-9]{64}$') {
             Throw-InstallerError "Invalid SHA-256 value in versions.env: $hashKey"
         }
     }
-    foreach ($urlKey in @('PLUGIN_ARCHIVE_URL', 'TRAINING_DATASET_ARCHIVE_URL', 'DOCKER_DESKTOP_URL', 'WSL_URL')) {
+    foreach ($urlKey in @(
+        'INVENTREE_SOURCE_ARCHIVE_URL', 'PLUGIN_ARCHIVE_URL',
+        'TRAINING_DATASET_ARCHIVE_URL', 'DOCKER_DESKTOP_URL', 'WSL_URL'
+    )) {
         if ($script:Versions[$urlKey] -notmatch '^https://') {
             Throw-InstallerError "Only HTTPS URLs are allowed in versions.env: $urlKey"
         }
+    }
+    if ($script:Versions.INVENTREE_SOURCE_COMMIT -cnotmatch '^[a-f0-9]{40}$') {
+        Throw-InstallerError 'INVENTREE_SOURCE_COMMIT must be a lowercase 40-character Git commit'
+    }
+    if ($script:Versions.INVENTREE_SOURCE_ARCHIVE_NAME -cnotmatch
+        '^[A-Za-z0-9._-]+\.tar\.gz$') {
+        Throw-InstallerError 'INVENTREE_SOURCE_ARCHIVE_NAME is invalid'
+    }
+
+    $previousImageIds = @($script:Versions.INVENTREE_PREVIOUS_IMAGE_IDS.Split(','))
+    if ($previousImageIds.Count -eq 0) {
+        Throw-InstallerError 'INVENTREE_PREVIOUS_IMAGE_IDS must contain at least one image ID'
+    }
+    $seenPreviousImageIds = @{}
+    foreach ($imageId in $previousImageIds) {
+        if ($imageId -cnotmatch '^sha256:[a-f0-9]{64}$') {
+            Throw-InstallerError "Invalid prior InvenTree image ID in versions.env: $imageId"
+        }
+        if ($seenPreviousImageIds.ContainsKey($imageId)) {
+            Throw-InstallerError "Duplicate prior InvenTree image ID in versions.env: $imageId"
+        }
+        $seenPreviousImageIds[$imageId] = $true
     }
     $trainingRate = 0.0
     if (-not [double]::TryParse(
@@ -1680,6 +2117,97 @@ function Assert-PluginIntegrationSettings {
     }
 }
 
+function Test-PreviousInventreeImageId {
+    param([Parameter(Mandatory = $true)][string]$Candidate)
+
+    return @($script:Versions.INVENTREE_PREVIOUS_IMAGE_IDS.Split(',')) -ccontains $Candidate
+}
+
+function Get-ReleaseMarkerImageId {
+    param(
+        [Parameter(Mandatory = $true)][string]$Path,
+        [Parameter()][switch]$Pending
+    )
+
+    Assert-RegularFile -Path $Path
+    $marker = Read-StrictKeyValueFile -Path $Path
+    $expected = @{
+        INSTALLER_FORMAT_VERSION = $script:Versions.INSTALLER_FORMAT_VERSION
+        IMAGE_PLATFORM = 'linux/amd64'
+        INVENTREE_SOURCE_COMMIT = $script:Versions.INVENTREE_SOURCE_COMMIT
+        INVENTREE_SOURCE_ARCHIVE_SHA256 = $script:Versions.INVENTREE_SOURCE_ARCHIVE_SHA256
+        PLUGIN_VERSION = $script:Versions.PLUGIN_VERSION
+        STOCK_PLUGIN_VERSION = $script:Versions.STOCK_PLUGIN_VERSION
+        PLUGIN_COMMIT = $script:Versions.PLUGIN_COMMIT
+        PLUGIN_ARCHIVE_SHA256 = $script:Versions.PLUGIN_ARCHIVE_SHA256
+    }
+    if ($Pending) {
+        $expected.MARKER_STATE = 'pending'
+        Assert-OnlyKeys `
+            -Values $marker `
+            -SourceName 'Pending installation marker' `
+            -Keys (@($expected.Keys) + 'INVENTREE_IMAGE_ID')
+    }
+    foreach ($key in $expected.Keys) {
+        if (-not $marker.ContainsKey($key) -or $marker[$key] -cne $expected[$key]) {
+            return $null
+        }
+    }
+    if (-not $marker.ContainsKey('INVENTREE_IMAGE_ID') -or
+        $marker.INVENTREE_IMAGE_ID -cnotmatch '^sha256:[a-f0-9]{64}$') {
+        return $null
+    }
+    return $marker.INVENTREE_IMAGE_ID
+}
+
+function Get-CurrentReleaseRecordedImageIds {
+    $recordedImageIds = [System.Collections.Generic.List[string]]::new()
+    $pendingMarkerPath = Join-Path $InstallDirectory '.installing'
+    if (Test-Path -LiteralPath $pendingMarkerPath) {
+        $pendingImageId = Get-ReleaseMarkerImageId -Path $pendingMarkerPath -Pending
+        if ([string]::IsNullOrWhiteSpace($pendingImageId)) {
+            Throw-InstallerError 'The pending installation marker does not match this release. Restore the matching installer or move the install directory aside explicitly.'
+        }
+        $recordedImageIds.Add($pendingImageId)
+    }
+
+    $installedMarkerPath = Join-Path $InstallDirectory '.installed'
+    if (Test-Path -LiteralPath $installedMarkerPath) {
+        $installedImageId = Get-ReleaseMarkerImageId -Path $installedMarkerPath
+        if (-not [string]::IsNullOrWhiteSpace($installedImageId) -and
+            -not $recordedImageIds.Contains($installedImageId)) {
+            $recordedImageIds.Add($installedImageId)
+        }
+    }
+
+    return $recordedImageIds.ToArray()
+}
+
+function Write-PendingReleaseMarker {
+    if ($script:InventreeDeployImage -cnotmatch '^sha256:[a-f0-9]{64}$') {
+        Throw-InstallerError 'Cannot record a pending deployment without an immutable InvenTree image ID'
+    }
+
+    $pendingMarkerPath = Join-Path $InstallDirectory '.installing'
+    $content = @(
+        'MARKER_STATE=pending',
+        "INSTALLER_FORMAT_VERSION=$($script:Versions.INSTALLER_FORMAT_VERSION)",
+        'IMAGE_PLATFORM=linux/amd64',
+        "INVENTREE_IMAGE_ID=$script:InventreeDeployImage",
+        "INVENTREE_SOURCE_COMMIT=$($script:Versions.INVENTREE_SOURCE_COMMIT)",
+        "INVENTREE_SOURCE_ARCHIVE_SHA256=$($script:Versions.INVENTREE_SOURCE_ARCHIVE_SHA256)",
+        "PLUGIN_VERSION=$($script:Versions.PLUGIN_VERSION)",
+        "STOCK_PLUGIN_VERSION=$($script:Versions.STOCK_PLUGIN_VERSION)",
+        "PLUGIN_COMMIT=$($script:Versions.PLUGIN_COMMIT)",
+        "PLUGIN_ARCHIVE_SHA256=$($script:Versions.PLUGIN_ARCHIVE_SHA256)"
+    ) -join "`n"
+    Write-ProtectedFileTransactionally -Destination $pendingMarkerPath -Content ($content + "`n")
+    if ((Get-ReleaseMarkerImageId -Path $pendingMarkerPath -Pending) -cne
+        $script:InventreeDeployImage) {
+        Throw-InstallerError 'Could not verify the pending installation marker'
+    }
+}
+
 function Prepare-DeploymentFiles {
     Assert-DeploymentImageIdsPresent
 
@@ -1712,6 +2240,7 @@ function Prepare-DeploymentFiles {
     Copy-IfMissing -Source (Join-Path $script:AssetRoot 'Caddyfile') -Destination (Join-Path $InstallDirectory 'Caddyfile')
 
     $environmentPath = Join-Path $InstallDirectory '.env'
+    $currentReleaseImageIds = @(Get-CurrentReleaseRecordedImageIds)
     if (Test-Path -LiteralPath $environmentPath) {
         Assert-RegularFile -Path $environmentPath
         Protect-SecretFile -Path $environmentPath
@@ -1734,10 +2263,20 @@ function Prepare-DeploymentFiles {
             if (-not $environment.ContainsKey($key)) {
                 Throw-InstallerError "Existing .env does not select this bundle's $key. Update it explicitly or use a new install directory."
             }
-            if ($environment[$key] -eq $legacy[$key]) {
+            if ($key -eq 'INVENTREE_IMAGE') {
+                if ($environment[$key] -ceq $legacy[$key] -or
+                    (Test-PreviousInventreeImageId -Candidate $environment[$key]) -or
+                    ($currentReleaseImageIds -ccontains $environment[$key])) {
+                    $migrateImageReferences = $true
+                }
+                elseif ($environment[$key] -cne $expected[$key]) {
+                    Throw-InstallerError "Existing .env does not select this installer release's $key. Update it explicitly or use a new install directory."
+                }
+            }
+            elseif ($environment[$key] -ceq $legacy[$key]) {
                 $migrateImageReferences = $true
             }
-            elseif ($environment[$key] -ne $expected[$key]) {
+            elseif ($environment[$key] -cne $expected[$key]) {
                 Throw-InstallerError "Existing .env does not select this bundle's $key. Update it explicitly or use a new install directory."
             }
         }
@@ -1769,6 +2308,23 @@ function Prepare-DeploymentFiles {
                 -SourceName 'Existing .env'
         }
 
+        if (-not $environment.ContainsKey('INVENTREE_HTTP_PORT') -or
+            $environment.INVENTREE_HTTP_PORT -notmatch '^\d+$') {
+            Throw-InstallerError 'Existing .env has no valid INVENTREE_HTTP_PORT'
+        }
+        $configuredPort = 0
+        if (-not [int]::TryParse($environment.INVENTREE_HTTP_PORT, [ref]$configuredPort) -or
+            $configuredPort -lt 1 -or $configuredPort -gt 65535) {
+            Throw-InstallerError 'Existing .env has no valid INVENTREE_HTTP_PORT'
+        }
+        if ($configuredPort -ne $HttpPort) {
+            Throw-InstallerError "Existing .env uses HTTP port $configuredPort; rerun with -HttpPort $configuredPort."
+        }
+
+        # Record the exact release before changing .env. If the process stops
+        # after the image IDs change, the next run can safely recognize and
+        # replace only the image ID recorded by this protected marker.
+        Write-PendingReleaseMarker
         if ($migrateImageReferences -or $migrateMandatoryPlugins -or $migrateIntegrationSettings) {
             Write-Step 'Updating installer-owned deployment settings'
             $updatedLines = foreach ($line in [IO.File]::ReadAllLines($environmentPath)) {
@@ -1796,18 +2352,19 @@ function Prepare-DeploymentFiles {
             Write-ProtectedFileTransactionally `
                 -Destination $environmentPath `
                 -Content (($updatedLines -join "`n") + "`n")
-        }
-        if (-not $environment.ContainsKey('INVENTREE_HTTP_PORT') -or
-            $environment.INVENTREE_HTTP_PORT -notmatch '^\d+$') {
-            Throw-InstallerError 'Existing .env has no valid INVENTREE_HTTP_PORT'
-        }
-        $configuredPort = 0
-        if (-not [int]::TryParse($environment.INVENTREE_HTTP_PORT, [ref]$configuredPort) -or
-            $configuredPort -lt 1 -or $configuredPort -gt 65535) {
-            Throw-InstallerError 'Existing .env has no valid INVENTREE_HTTP_PORT'
-        }
-        if ($configuredPort -ne $HttpPort) {
-            Throw-InstallerError "Existing .env uses HTTP port $configuredPort; rerun with -HttpPort $configuredPort."
+            $migratedEnvironment = Read-StrictKeyValueFile -Path $environmentPath
+            foreach ($key in $expected.Keys) {
+                if ($migratedEnvironment[$key] -cne $expected[$key]) {
+                    Throw-InstallerError "Could not migrate $key to an immutable image ID"
+                }
+            }
+            if ($migrateMandatoryPlugins -and
+                $migratedEnvironment.INVENTREE_PLUGINS_MANDATORY -cne $installerMandatoryPlugins) {
+                Throw-InstallerError 'Could not migrate INVENTREE_PLUGINS_MANDATORY'
+            }
+            Assert-PluginIntegrationSettings `
+                -Value $migratedEnvironment.INVENTREE_GLOBAL_SETTINGS `
+                -SourceName 'Updated .env'
         }
         $script:EffectiveHttpPort = $configuredPort
     }
@@ -1819,6 +2376,7 @@ function Prepare-DeploymentFiles {
         $content = $content.Replace('__CADDY_IMAGE__', $script:CaddyDeployImage)
         $content = $content.Replace('__HTTP_PORT__', $HttpPort.ToString())
         $content = $content.Replace('__DB_PASSWORD__', (New-RandomPassword))
+        Write-PendingReleaseMarker
         Write-ProtectedFileTransactionally -Destination $environmentPath -Content $content
         $script:EffectiveHttpPort = $HttpPort
     }
@@ -1852,6 +2410,18 @@ function Test-ComposeCommand {
         '--env-file', (Join-Path $InstallDirectory '.env')
     ) + $ArgumentList
     return Test-NativeCommand -FilePath $script:DockerCommand -ArgumentList $arguments
+}
+
+function Test-InventreeDatabaseInitialized {
+    $output = Invoke-Compose -ArgumentList @(
+        'exec', '-T', 'inventree-db', 'sh', '-ceu',
+        'psql --no-psqlrc --tuples-only --no-align --set ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$POSTGRES_DB" --command "SELECT CASE WHEN EXISTS (SELECT 1 FROM pg_catalog.pg_tables WHERE schemaname NOT IN (''pg_catalog'', ''information_schema'')) THEN ''initialized'' ELSE ''empty'' END;"'
+    ) -CaptureOutput
+    $state = Get-LastOutputLine -Output $output
+    if ($state -notin @('empty', 'initialized')) {
+        Throw-InstallerError "Could not determine whether the InvenTree database is initialized: $state"
+    }
+    return $state -eq 'initialized'
 }
 
 function Get-ExistingAdminCount {
@@ -1957,7 +2527,12 @@ function Deploy-Application {
     $expectedPluginVersions = "$($script:Versions.PLUGIN_VERSION)|$($script:Versions.STOCK_PLUGIN_VERSION)"
 
     $markerPath = Join-Path $InstallDirectory '.installed'
-    if ($TrainingData -and (Test-Path -LiteralPath $markerPath -PathType Leaf)) {
+    $installedMarkerExists = Test-Path -LiteralPath $markerPath
+    if ($installedMarkerExists) {
+        Assert-RegularFile -Path $markerPath
+        Protect-SecretFile -Path $markerPath
+    }
+    if ($TrainingData -and $installedMarkerExists) {
         Throw-InstallerError '-TrainingData is only allowed during the first installation; existing data was not changed'
     }
 
@@ -1968,7 +2543,10 @@ function Deploy-Application {
     Invoke-Compose -ArgumentList @('stop', 'inventree-proxy', 'inventree-worker', 'inventree-server')
 
     Write-Step 'Starting database and cache'
-    Invoke-Compose -ArgumentList @('up', '-d', '--pull', 'never', '--no-build', 'inventree-db', 'inventree-cache')
+    Invoke-Compose -ArgumentList @(
+        'up', '-d', '--pull', 'never', '--no-build', '--wait', '--wait-timeout', '120',
+        'inventree-db', 'inventree-cache'
+    )
 
     $imageCheck = Invoke-Compose -ArgumentList @(
         'run', '--rm', '--no-deps', '--entrypoint', 'python', 'inventree-server', '-c',
@@ -1978,9 +2556,11 @@ function Deploy-Application {
         Throw-InstallerError 'Deployment image does not contain the expected plugin versions'
     }
 
-    if (Test-Path -LiteralPath $markerPath) {
-        Assert-RegularFile -Path $markerPath
-        Protect-SecretFile -Path $markerPath
+    $databaseInitialized = Test-InventreeDatabaseInitialized
+    if ($installedMarkerExists -and -not $databaseInitialized) {
+        Throw-InstallerError 'The installation marker exists, but the database has no application tables. Refusing to continue without an explicit recovery decision.'
+    }
+    if ($databaseInitialized) {
         Write-Step 'Backing up the existing InvenTree database and media'
         Invoke-Compose -ArgumentList @('run', '--rm', 'inventree-server', 'invoke', 'backup')
     }
@@ -2048,13 +2628,23 @@ function Deploy-Application {
 
     $marker = @(
         "INSTALLER_FORMAT_VERSION=$($script:Versions.INSTALLER_FORMAT_VERSION)",
+        'IMAGE_PLATFORM=linux/amd64',
+        "INVENTREE_IMAGE_ID=$script:InventreeDeployImage",
+        "INVENTREE_SOURCE_COMMIT=$($script:Versions.INVENTREE_SOURCE_COMMIT)",
+        "INVENTREE_SOURCE_ARCHIVE_SHA256=$($script:Versions.INVENTREE_SOURCE_ARCHIVE_SHA256)",
         "PLUGIN_VERSION=$($script:Versions.PLUGIN_VERSION)",
         "STOCK_PLUGIN_VERSION=$($script:Versions.STOCK_PLUGIN_VERSION)",
         "PLUGIN_COMMIT=$($script:Versions.PLUGIN_COMMIT)",
+        "PLUGIN_ARCHIVE_SHA256=$($script:Versions.PLUGIN_ARCHIVE_SHA256)",
         "TRAINING_DATA=$($TrainingData.IsPresent.ToString().ToLowerInvariant())",
         "TRAINING_DATASET_COMMIT=$($script:Versions.TRAINING_DATASET_COMMIT)"
     ) -join "`n"
     Write-ProtectedFileTransactionally -Destination $markerPath -Content ($marker + "`n")
+    $pendingMarkerPath = Join-Path $InstallDirectory '.installing'
+    if (Test-Path -LiteralPath $pendingMarkerPath) {
+        Assert-RegularFile -Path $pendingMarkerPath
+        Remove-Item -LiteralPath $pendingMarkerPath -Force
+    }
 
     Write-Step "InvenTree is ready at http://localhost:$($script:EffectiveHttpPort)"
     Write-Host "Data and automatic backups: $(Join-Path $InstallDirectory 'inventree-data')"

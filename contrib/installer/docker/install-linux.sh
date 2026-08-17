@@ -26,6 +26,8 @@ EXPORT_STAGING_DIR=""
 ENV_TEMP_FILE=""
 INSTALLED_TEMP_FILE=""
 TRAINING_TEMP_FILE=""
+INVENTREE_SOURCE_TEMP_FILE=""
+INVENTREE_SOURCE_BUILD_CONTEXT=""
 
 usage() {
     cat <<'EOF'
@@ -81,6 +83,8 @@ cleanup_installer() {
     [[ -z "$ENV_TEMP_FILE" ]] || unlink -- "$ENV_TEMP_FILE"
     [[ -z "$INSTALLED_TEMP_FILE" ]] || unlink -- "$INSTALLED_TEMP_FILE"
     [[ -z "$TRAINING_TEMP_FILE" ]] || unlink -- "$TRAINING_TEMP_FILE"
+    [[ -z "$INVENTREE_SOURCE_TEMP_FILE" ]] || unlink -- "$INVENTREE_SOURCE_TEMP_FILE"
+    remove_private_tree "$INVENTREE_SOURCE_BUILD_CONTEXT"
     remove_private_tree "$EXPORT_STAGING_DIR"
     if [[ -n "$EXPORT_LOCK_FD" ]]; then
         flock --unlock "$EXPORT_LOCK_FD"
@@ -217,7 +221,7 @@ release_export_lock() {
 
 load_versions() {
     local versions_file="$1"
-    local allowed_keys=' INSTALLER_FORMAT_VERSION INVENTREE_BASE_SOURCE INVENTREE_RUNTIME_IMAGE POSTGRES_SOURCE POSTGRES_RUNTIME_IMAGE REDIS_SOURCE REDIS_RUNTIME_IMAGE CADDY_SOURCE CADDY_RUNTIME_IMAGE PLUGIN_VERSION PLUGIN_COMMIT PLUGIN_ARCHIVE_NAME PLUGIN_ARCHIVE_URL PLUGIN_ARCHIVE_SHA256 PLUGIN_ARCHIVE_SUBDIRECTORY STOCK_PLUGIN_VERSION STOCK_PLUGIN_ARCHIVE_SUBDIRECTORY TRAINING_DATASET_COMMIT TRAINING_DATASET_ARCHIVE_NAME TRAINING_DATASET_ARCHIVE_URL TRAINING_DATASET_ARCHIVE_SHA256 TRAINING_USD_IRT_RATE DOCKER_DESKTOP_VERSION DOCKER_DESKTOP_BUILD DOCKER_DESKTOP_URL DOCKER_DESKTOP_SHA256 WSL_VERSION WSL_URL WSL_SHA256 '
+    local allowed_keys=' INSTALLER_FORMAT_VERSION INVENTREE_BASE_SOURCE INVENTREE_RUNTIME_IMAGE INVENTREE_SOURCE_COMMIT INVENTREE_SOURCE_ARCHIVE_NAME INVENTREE_SOURCE_ARCHIVE_URL INVENTREE_SOURCE_ARCHIVE_SHA256 INVENTREE_PREVIOUS_IMAGE_IDS POSTGRES_SOURCE POSTGRES_RUNTIME_IMAGE REDIS_SOURCE REDIS_RUNTIME_IMAGE CADDY_SOURCE CADDY_RUNTIME_IMAGE PLUGIN_VERSION PLUGIN_COMMIT PLUGIN_ARCHIVE_NAME PLUGIN_ARCHIVE_URL PLUGIN_ARCHIVE_SHA256 PLUGIN_ARCHIVE_SUBDIRECTORY STOCK_PLUGIN_VERSION STOCK_PLUGIN_ARCHIVE_SUBDIRECTORY TRAINING_DATASET_COMMIT TRAINING_DATASET_ARCHIVE_NAME TRAINING_DATASET_ARCHIVE_URL TRAINING_DATASET_ARCHIVE_SHA256 TRAINING_USD_IRT_RATE DOCKER_DESKTOP_VERSION DOCKER_DESKTOP_BUILD DOCKER_DESKTOP_URL DOCKER_DESKTOP_SHA256 WSL_VERSION WSL_URL WSL_SHA256 '
     [[ -f "$versions_file" ]] || die "Missing version manifest: $versions_file"
 
     while IFS='=' read -r key value; do
@@ -230,6 +234,9 @@ load_versions() {
     local required_key
     for required_key in \
         INSTALLER_FORMAT_VERSION INVENTREE_BASE_SOURCE INVENTREE_RUNTIME_IMAGE \
+        INVENTREE_SOURCE_COMMIT INVENTREE_SOURCE_ARCHIVE_NAME \
+        INVENTREE_SOURCE_ARCHIVE_URL INVENTREE_SOURCE_ARCHIVE_SHA256 \
+        INVENTREE_PREVIOUS_IMAGE_IDS \
         POSTGRES_SOURCE POSTGRES_RUNTIME_IMAGE REDIS_SOURCE REDIS_RUNTIME_IMAGE \
         CADDY_SOURCE CADDY_RUNTIME_IMAGE PLUGIN_VERSION PLUGIN_COMMIT \
         PLUGIN_ARCHIVE_URL PLUGIN_ARCHIVE_SHA256 PLUGIN_ARCHIVE_SUBDIRECTORY \
@@ -237,6 +244,25 @@ load_versions() {
         TRAINING_DATASET_COMMIT TRAINING_DATASET_ARCHIVE_URL \
         TRAINING_DATASET_ARCHIVE_SHA256 TRAINING_USD_IRT_RATE; do
         [[ -n "${!required_key:-}" ]] || die "versions.env is missing $required_key"
+    done
+
+    [[ "$INVENTREE_SOURCE_COMMIT" =~ ^[0-9a-f]{40}$ ]] \
+        || die "Invalid InvenTree source commit in versions.env"
+    [[ "$INVENTREE_SOURCE_ARCHIVE_NAME" =~ ^[A-Za-z0-9._-]+[.]tar[.]gz$ ]] \
+        || die "Invalid InvenTree source archive name in versions.env"
+    [[ "$INVENTREE_SOURCE_ARCHIVE_URL" == https://* ]] \
+        || die "InvenTree source archive URL must use HTTPS"
+    [[ "$INVENTREE_SOURCE_ARCHIVE_SHA256" =~ ^[0-9a-fA-F]{64}$ ]] \
+        || die "Invalid InvenTree source archive SHA-256 in versions.env"
+
+    local previous_image_id
+    local previous_image_ids=()
+    IFS=, read -r -a previous_image_ids <<< "$INVENTREE_PREVIOUS_IMAGE_IDS"
+    ((${#previous_image_ids[@]} > 0)) \
+        || die "INVENTREE_PREVIOUS_IMAGE_IDS must contain at least one image ID"
+    for previous_image_id in "${previous_image_ids[@]}"; do
+        [[ "$previous_image_id" =~ ^sha256:[0-9a-f]{64}$ ]] \
+            || die "Invalid prior InvenTree image ID in versions.env: $previous_image_id"
     done
 
     [[ "$TRAINING_DATASET_ARCHIVE_SHA256" =~ ^[0-9a-fA-F]{64}$ ]] \
@@ -665,6 +691,119 @@ verify_docker_platform() {
     [[ "$DAEMON_ARCH" == "$HOST_ARCH" ]] || die "Host architecture ($HOST_ARCH) and Docker architecture ($DAEMON_ARCH) do not match"
 }
 
+download_inventree_source() {
+    local destination="$1"
+    local destination_directory
+    destination_directory="$(dirname -- "$destination")"
+    require_directory_path "$destination_directory" "InvenTree source cache directory"
+    require_regular_path "$destination" "InvenTree source archive"
+
+    if [[ ! -f "$destination" ]] || [[ "$(sha256_file "$destination")" != "$INVENTREE_SOURCE_ARCHIVE_SHA256" ]]; then
+        note "Downloading pinned InvenTree fork source"
+        INVENTREE_SOURCE_TEMP_FILE="$(mktemp --tmpdir="$destination_directory" '.inventree-source.XXXXXXXX.tar.gz')"
+        curl --fail --location --silent --show-error --proto '=https' --proto-redir '=https' \
+            "$INVENTREE_SOURCE_ARCHIVE_URL" \
+            --output "$INVENTREE_SOURCE_TEMP_FILE"
+        [[ "$(sha256_file "$INVENTREE_SOURCE_TEMP_FILE")" == "$INVENTREE_SOURCE_ARCHIVE_SHA256" ]] \
+            || die "InvenTree source checksum mismatch"
+        mv -T -- "$INVENTREE_SOURCE_TEMP_FILE" "$destination"
+        INVENTREE_SOURCE_TEMP_FILE=""
+    fi
+
+    [[ "$(sha256_file "$destination")" == "$INVENTREE_SOURCE_ARCHIVE_SHA256" ]] \
+        || die "InvenTree source checksum mismatch"
+}
+
+validate_inventree_source_archive() {
+    local source_archive="$1"
+    local expected_root="InvenTree-${INVENTREE_SOURCE_COMMIT}"
+    local archive_member archive_line member_type component
+    local member_count=0
+    local path_components=()
+
+    tar --gzip --list --file "$source_archive" >/dev/null \
+        || die "InvenTree source archive is not a readable gzip tar archive"
+
+    while IFS= read -r archive_member; do
+        ((member_count += 1))
+        [[ "$archive_member" =~ ^[A-Za-z0-9_./@+,:=-]+$ ]] \
+            || die "InvenTree source archive contains an unsafe path"
+        [[ "$archive_member" == "$expected_root/" || "$archive_member" == "$expected_root/"* ]] \
+            || die "InvenTree source archive does not match commit $INVENTREE_SOURCE_COMMIT"
+        [[ "$archive_member" != *//* ]] \
+            || die "InvenTree source archive contains an invalid path"
+
+        local IFS=/
+        read -r -a path_components <<< "${archive_member%/}"
+        for component in "${path_components[@]}"; do
+            [[ "$component" != . && "$component" != .. ]] \
+                || die "InvenTree source archive contains a path traversal"
+        done
+    done < <(tar --gzip --list --quoting-style=escape --file "$source_archive")
+    ((member_count > 0)) || die "InvenTree source archive is empty"
+
+    while IFS= read -r archive_line; do
+        member_type="${archive_line:0:1}"
+        [[ "$member_type" == - || "$member_type" == d ]] \
+            || die "InvenTree source archive contains a link or special file"
+    done < <(tar --gzip --list --verbose --quoting-style=escape --file "$source_archive")
+}
+
+extract_inventree_source() {
+    local source_archive="$1"
+    local destination="$2"
+    local special_path
+
+    validate_inventree_source_archive "$source_archive"
+    tar \
+        --extract \
+        --gzip \
+        --file "$source_archive" \
+        --directory "$destination" \
+        --strip-components=1 \
+        --no-same-owner \
+        --no-same-permissions \
+        --delay-directory-restore
+
+    special_path="$(find "$destination" ! -type f ! -type d -print -quit)"
+    [[ -z "$special_path" ]] \
+        || die "Extracted InvenTree source contains a link or special file: $special_path"
+    [[ -f "$destination/contrib/container/Dockerfile" \
+        && ! -L "$destination/contrib/container/Dockerfile" ]] \
+        || die "Pinned InvenTree source does not contain the canonical container Dockerfile"
+}
+
+verify_inventree_source_commit() {
+    local reference="$1"
+    local verification_label="$2"
+    local image_commit
+    image_commit="$("${DOCKER[@]}" image inspect \
+        --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}' \
+        -- "$reference")"
+    [[ "$image_commit" == "$INVENTREE_SOURCE_COMMIT" ]] \
+        || die "$verification_label source commit verification failed: expected ${INVENTREE_SOURCE_COMMIT}, got ${image_commit:-missing}"
+}
+
+build_inventree_base_image() {
+    local source_archive="$1"
+
+    note "Building pinned InvenTree fork commit ${INVENTREE_SOURCE_COMMIT}"
+    INVENTREE_SOURCE_BUILD_CONTEXT="$(mktemp -d)"
+    extract_inventree_source "$source_archive" "$INVENTREE_SOURCE_BUILD_CONTEXT"
+    "${DOCKER[@]}" build \
+        --platform "linux/${DAEMON_ARCH}" \
+        --file "$INVENTREE_SOURCE_BUILD_CONTEXT/contrib/container/Dockerfile" \
+        --target production \
+        --build-arg "commit_hash=${INVENTREE_SOURCE_COMMIT}" \
+        --build-arg "commit_tag=${INVENTREE_SOURCE_COMMIT:0:12}" \
+        --tag "$INVENTREE_BASE_SOURCE" \
+        "$INVENTREE_SOURCE_BUILD_CONTEXT"
+    verify_inventree_source_commit "$INVENTREE_BASE_SOURCE" "Built InvenTree base image"
+    remove_private_tree "$INVENTREE_SOURCE_BUILD_CONTEXT" \
+        || die "Could not remove temporary InvenTree source build context"
+    INVENTREE_SOURCE_BUILD_CONTEXT=""
+}
+
 download_plugin_source() {
     local destination="$1"
     mkdir -p -- "$(dirname -- "$destination")"
@@ -713,17 +852,20 @@ snapshot_deployment_images() {
     REDIS_DEPLOY_IMAGE="$(image_id "$REDIS_RUNTIME_IMAGE")"
     CADDY_DEPLOY_IMAGE="$(image_id "$CADDY_RUNTIME_IMAGE")"
 
+    verify_inventree_source_commit "$INVENTREE_DEPLOY_IMAGE" "Built image"
     verify_plugin_image_versions "$INVENTREE_DEPLOY_IMAGE" "Built image"
 }
 
 acquire_application_images() {
     local persistent_cache="$SCRIPT_DIR/cache"
+    local inventree_source_archive="$persistent_cache/inventree-source.tar.gz"
     local plugin_archive="$persistent_cache/plugin-source.tar.gz"
     local build_context
+    download_inventree_source "$inventree_source_archive"
     download_plugin_source "$plugin_archive"
+    build_inventree_base_image "$inventree_source_archive"
 
-    note "Pulling pinned InvenTree stack images"
-    "${DOCKER[@]}" pull --platform "linux/${DAEMON_ARCH}" "$INVENTREE_BASE_SOURCE"
+    note "Pulling pinned database, cache, and proxy images"
     "${DOCKER[@]}" pull --platform "linux/${DAEMON_ARCH}" "$POSTGRES_SOURCE"
     "${DOCKER[@]}" pull --platform "linux/${DAEMON_ARCH}" "$REDIS_SOURCE"
     "${DOCKER[@]}" pull --platform "linux/${DAEMON_ARCH}" "$CADDY_SOURCE"
@@ -762,6 +904,9 @@ write_bundle_manifest() {
         printf 'PLATFORM=linux/%s\n' "$DAEMON_ARCH"
         printf 'INVENTREE_IMAGE=%s\n' "$INVENTREE_RUNTIME_IMAGE"
         printf 'INVENTREE_IMAGE_ID=%s\n' "$INVENTREE_DEPLOY_IMAGE"
+        printf 'INVENTREE_SOURCE_COMMIT=%s\n' "$INVENTREE_SOURCE_COMMIT"
+        printf 'INVENTREE_SOURCE_ARCHIVE_NAME=%s\n' "$INVENTREE_SOURCE_ARCHIVE_NAME"
+        printf 'INVENTREE_SOURCE_ARCHIVE_SHA256=%s\n' "$INVENTREE_SOURCE_ARCHIVE_SHA256"
         printf 'POSTGRES_IMAGE=%s\n' "$POSTGRES_RUNTIME_IMAGE"
         printf 'POSTGRES_IMAGE_ID=%s\n' "$POSTGRES_DEPLOY_IMAGE"
         printf 'REDIS_IMAGE=%s\n' "$REDIS_RUNTIME_IMAGE"
@@ -801,6 +946,7 @@ export_offline_bundle() {
     [[ "$destination_parent" == "$(dirname -- "$destination")" ]] \
         || die "Bundle export lock does not cover $destination"
 
+    download_inventree_source "$SCRIPT_DIR/cache/inventree-source.tar.gz"
     download_training_dataset "$SCRIPT_DIR/cache/training-dataset.tar.gz"
 
     local previous="${destination}.previous"
@@ -838,6 +984,7 @@ export_offline_bundle() {
         "$SCRIPT_DIR/Dockerfile" "$SCRIPT_DIR/versions.env" "$SCRIPT_DIR/install-linux.sh" "$staging/"
     [[ -f "$SCRIPT_DIR/README.md" ]] && cp -- "$SCRIPT_DIR/README.md" "$staging/"
     [[ -f "$SCRIPT_DIR/install-windows.ps1" ]] && cp -- "$SCRIPT_DIR/install-windows.ps1" "$staging/"
+    cp -- "$SCRIPT_DIR/cache/inventree-source.tar.gz" "$staging/cache/inventree-source.tar.gz"
     cp -- "$SCRIPT_DIR/cache/plugin-source.tar.gz" "$staging/cache/plugin-source.tar.gz"
     cp -- "$SCRIPT_DIR/cache/training-dataset.tar.gz" "$staging/cache/training-dataset.tar.gz"
 
@@ -899,7 +1046,7 @@ verify_bundle_structure() {
     local checksum_path special_path
     special_path="$(find "$bundle_root" -mindepth 1 ! -type f ! -type d -print -quit)"
     [[ -z "$special_path" ]] || die "Offline bundle contains a special file: $special_path"
-    for checksum_path in versions.env bundle.env compose.yaml Caddyfile env.template Dockerfile install-linux.sh cache/plugin-source.tar.gz cache/training-dataset.tar.gz; do
+    for checksum_path in versions.env bundle.env compose.yaml Caddyfile env.template Dockerfile install-linux.sh cache/inventree-source.tar.gz cache/plugin-source.tar.gz cache/training-dataset.tar.gz; do
         [[ -f "$bundle_root/$checksum_path" && ! -L "$bundle_root/$checksum_path" ]] \
             || die "Offline bundle is missing required file: $checksum_path"
     done
@@ -911,6 +1058,14 @@ verify_bundle_directory() {
 
     grep -Fqx "INSTALLER_FORMAT_VERSION=${INSTALLER_FORMAT_VERSION}" "$bundle_root/bundle.env" \
         || die "Offline bundle format does not match this installer"
+    grep -Fqx "INVENTREE_SOURCE_COMMIT=${INVENTREE_SOURCE_COMMIT}" "$bundle_root/bundle.env" \
+        || die "Offline bundle InvenTree source commit does not match this installer"
+    grep -Fqx "INVENTREE_SOURCE_ARCHIVE_NAME=${INVENTREE_SOURCE_ARCHIVE_NAME}" "$bundle_root/bundle.env" \
+        || die "Offline bundle InvenTree source archive does not match this installer"
+    grep -Fqx "INVENTREE_SOURCE_ARCHIVE_SHA256=${INVENTREE_SOURCE_ARCHIVE_SHA256}" "$bundle_root/bundle.env" \
+        || die "Offline bundle InvenTree source checksum does not match this installer"
+    [[ "$(sha256_file "$bundle_root/cache/inventree-source.tar.gz")" == "$INVENTREE_SOURCE_ARCHIVE_SHA256" ]] \
+        || die "Offline bundle InvenTree source archive checksum mismatch"
     grep -Fqx "PLUGIN_COMMIT=${PLUGIN_COMMIT}" "$bundle_root/bundle.env" \
         || die "Offline bundle plugin does not match this installer"
     grep -Fqx "TRAINING_DATASET_COMMIT=${TRAINING_DATASET_COMMIT}" "$bundle_root/bundle.env" \
@@ -976,6 +1131,9 @@ load_bundle_manifest() {
     [[ "${BUNDLE_PLUGIN_VERSION:-}" == "$PLUGIN_VERSION" ]] || die "Bundle plugin version does not match versions.env"
     [[ "${BUNDLE_STOCK_PLUGIN_VERSION:-}" == "$STOCK_PLUGIN_VERSION" ]] || die "Bundle stock plugin version does not match versions.env"
     [[ "${BUNDLE_PLUGIN_COMMIT:-}" == "$PLUGIN_COMMIT" ]] || die "Bundle plugin commit does not match versions.env"
+    [[ "${BUNDLE_INVENTREE_SOURCE_COMMIT:-}" == "$INVENTREE_SOURCE_COMMIT" ]] || die "Bundle InvenTree source commit does not match versions.env"
+    [[ "${BUNDLE_INVENTREE_SOURCE_ARCHIVE_NAME:-}" == "$INVENTREE_SOURCE_ARCHIVE_NAME" ]] || die "Bundle InvenTree source archive does not match versions.env"
+    [[ "${BUNDLE_INVENTREE_SOURCE_ARCHIVE_SHA256:-}" == "$INVENTREE_SOURCE_ARCHIVE_SHA256" ]] || die "Bundle InvenTree source checksum does not match versions.env"
     [[ "${BUNDLE_TRAINING_DATASET_COMMIT:-}" == "$TRAINING_DATASET_COMMIT" ]] || die "Bundle training dataset commit does not match versions.env"
     [[ "${BUNDLE_TRAINING_DATASET_ARCHIVE_SHA256:-}" == "$TRAINING_DATASET_ARCHIVE_SHA256" ]] || die "Bundle training dataset checksum does not match versions.env"
 
@@ -983,6 +1141,8 @@ load_bundle_manifest() {
     for required_key in \
         BUNDLE_INSTALLER_FORMAT_VERSION BUNDLE_PLATFORM \
         BUNDLE_INVENTREE_IMAGE BUNDLE_INVENTREE_IMAGE_ID \
+        BUNDLE_INVENTREE_SOURCE_COMMIT BUNDLE_INVENTREE_SOURCE_ARCHIVE_NAME \
+        BUNDLE_INVENTREE_SOURCE_ARCHIVE_SHA256 \
         BUNDLE_POSTGRES_IMAGE BUNDLE_POSTGRES_IMAGE_ID \
         BUNDLE_REDIS_IMAGE BUNDLE_REDIS_IMAGE_ID \
         BUNDLE_CADDY_IMAGE BUNDLE_CADDY_IMAGE_ID \
@@ -1036,6 +1196,7 @@ load_offline_images() {
     POSTGRES_DEPLOY_IMAGE="$BUNDLE_POSTGRES_IMAGE_ID"
     REDIS_DEPLOY_IMAGE="$BUNDLE_REDIS_IMAGE_ID"
     CADDY_DEPLOY_IMAGE="$BUNDLE_CADDY_IMAGE_ID"
+    verify_inventree_source_commit "$INVENTREE_DEPLOY_IMAGE" "Bundled image"
     verify_plugin_image_versions "$INVENTREE_DEPLOY_IMAGE" "Bundled image"
 }
 
@@ -1045,6 +1206,51 @@ random_password() {
     else
         head -c 64 /dev/urandom | od -An -tx1 | tr -d ' \n'
     fi
+}
+
+is_previous_inventree_image_id() {
+    local candidate="$1"
+    [[ ",${INVENTREE_PREVIOUS_IMAGE_IDS}," == *",${candidate},"* ]]
+}
+
+current_release_installed_image_id() {
+    local marker="$INSTALL_DIR/.installed"
+    [[ -f "$marker" ]] || return 1
+    require_regular_path "$marker" "Installation marker"
+
+    local line key value
+    declare -A marker_values=()
+    while IFS= read -r line || [[ -n "$line" ]]; do
+        [[ -z "$line" || "$line" == \#* ]] && continue
+        [[ "$line" =~ ^([A-Z][A-Z0-9_]*)=(.*)$ ]] || return 1
+        key="${BASH_REMATCH[1]}"
+        value="${BASH_REMATCH[2]}"
+        [[ ! -v "marker_values[$key]" ]] || return 1
+        marker_values[$key]="$value"
+    done < "$marker"
+
+    [[ "${marker_values[INSTALLER_FORMAT_VERSION]:-}" == "$INSTALLER_FORMAT_VERSION" ]] || return 1
+    [[ "${marker_values[PLATFORM]:-}" == "linux/${DAEMON_ARCH}" ]] || return 1
+    [[ "${marker_values[INVENTREE_SOURCE_COMMIT]:-}" == "$INVENTREE_SOURCE_COMMIT" ]] || return 1
+    [[ "${marker_values[INVENTREE_SOURCE_ARCHIVE_SHA256]:-}" == "$INVENTREE_SOURCE_ARCHIVE_SHA256" ]] || return 1
+    [[ "${marker_values[PLUGIN_COMMIT]:-}" == "$PLUGIN_COMMIT" ]] || return 1
+    [[ "${marker_values[PLUGIN_ARCHIVE_SHA256]:-}" == "$PLUGIN_ARCHIVE_SHA256" ]] || return 1
+    [[ "${marker_values[PLUGIN_VERSION]:-}" == "$PLUGIN_VERSION" ]] || return 1
+    [[ "${marker_values[STOCK_PLUGIN_VERSION]:-}" == "$STOCK_PLUGIN_VERSION" ]] || return 1
+
+    value="${marker_values[INVENTREE_IMAGE_ID]:-}"
+    [[ "$value" =~ ^sha256:[0-9a-f]{64}$ ]] || return 1
+    printf '%s\n' "$value"
+}
+
+read_single_env_value() {
+    local key="$1"
+    local values=()
+
+    mapfile -t values < <(sed -n "s/^${key}=//p" "$INSTALL_DIR/.env")
+    ((${#values[@]} == 1)) \
+        || die "Existing .env must define ${key} exactly once."
+    REPLY="${values[0]}"
 }
 
 migrate_deployment_image_references() {
@@ -1061,14 +1267,31 @@ migrate_deployment_image_references() {
         "$REDIS_DEPLOY_IMAGE"
         "$CADDY_DEPLOY_IMAGE"
     )
-    local configured_value index
+    local configured_value index installed_release_image_id=""
     local migration_required=false
+    if ! installed_release_image_id="$(current_release_installed_image_id)"; then
+        installed_release_image_id=""
+    fi
 
     for index in "${!keys[@]}"; do
-        configured_value="$(sed -n "s/^${keys[$index]}=//p" "$INSTALL_DIR/.env" | tail -n 1)"
-        if [[ "$configured_value" == "${mutable_images[$index]}" ]]; then
+        read_single_env_value "${keys[$index]}"
+        configured_value="$REPLY"
+        if ((index == 0)); then
+            if [[ "$configured_value" == "${immutable_images[$index]}" ]]; then
+                :
+            elif [[ "$configured_value" == "${mutable_images[$index]}" ]] \
+                || is_previous_inventree_image_id "$configured_value" \
+                || [[ -n "$installed_release_image_id" \
+                    && "$configured_value" == "$installed_release_image_id" ]]; then
+                migration_required=true
+            else
+                die "Existing .env does not select this installer release's ${keys[$index]}. Update it explicitly or use a new install directory."
+            fi
+        elif [[ "$configured_value" == "${immutable_images[$index]}" ]]; then
+            :
+        elif [[ "$configured_value" == "${mutable_images[$index]}" ]]; then
             migration_required=true
-        elif [[ "$configured_value" != "${immutable_images[$index]}" ]]; then
+        else
             die "Existing .env does not select this bundle's ${keys[$index]}. Update it explicitly or use a new install directory."
         fi
     done
@@ -1079,6 +1302,8 @@ migrate_deployment_image_references() {
         chmod 600 "$ENV_TEMP_FILE"
         awk \
             -v inventree_old="$INVENTREE_RUNTIME_IMAGE" \
+            -v inventree_previous="$INVENTREE_PREVIOUS_IMAGE_IDS" \
+            -v inventree_installed="$installed_release_image_id" \
             -v inventree_new="$INVENTREE_DEPLOY_IMAGE" \
             -v postgres_old="$POSTGRES_RUNTIME_IMAGE" \
             -v postgres_new="$POSTGRES_DEPLOY_IMAGE" \
@@ -1086,7 +1311,20 @@ migrate_deployment_image_references() {
             -v redis_new="$REDIS_DEPLOY_IMAGE" \
             -v caddy_old="$CADDY_RUNTIME_IMAGE" \
             -v caddy_new="$CADDY_DEPLOY_IMAGE" \
-            '$0 == "INVENTREE_IMAGE=" inventree_old { $0 = "INVENTREE_IMAGE=" inventree_new }
+            'function is_previous_inventree_id(value, count, values, item_index) {
+                 count = split(inventree_previous, values, ",")
+                 for (item_index = 1; item_index <= count; item_index++) {
+                     if (value == values[item_index]) return 1
+                 }
+                 return 0
+             }
+             /^INVENTREE_IMAGE=/ {
+                 value = substr($0, length("INVENTREE_IMAGE=") + 1)
+                 if (value == inventree_old || is_previous_inventree_id(value) ||
+                     (inventree_installed != "" && value == inventree_installed)) {
+                     $0 = "INVENTREE_IMAGE=" inventree_new
+                 }
+             }
              $0 == "INVENTREE_DB_IMAGE=" postgres_old { $0 = "INVENTREE_DB_IMAGE=" postgres_new }
              $0 == "INVENTREE_CACHE_IMAGE=" redis_old { $0 = "INVENTREE_CACHE_IMAGE=" redis_new }
              $0 == "INVENTREE_PROXY_IMAGE=" caddy_old { $0 = "INVENTREE_PROXY_IMAGE=" caddy_new }
@@ -1096,7 +1334,8 @@ migrate_deployment_image_references() {
         ENV_TEMP_FILE=""
 
         for index in "${!keys[@]}"; do
-            configured_value="$(sed -n "s/^${keys[$index]}=//p" "$INSTALL_DIR/.env" | tail -n 1)"
+            read_single_env_value "${keys[$index]}"
+            configured_value="$REPLY"
             [[ "$configured_value" == "${immutable_images[$index]}" ]] \
                 || die "Could not migrate ${keys[$index]} to an immutable image ID"
         done
@@ -1428,9 +1667,14 @@ deploy_application() {
     chmod 600 "$INSTALLED_TEMP_FILE"
     {
         printf 'INSTALLER_FORMAT_VERSION=%s\n' "$INSTALLER_FORMAT_VERSION"
+        printf 'PLATFORM=linux/%s\n' "$DAEMON_ARCH"
+        printf 'INVENTREE_SOURCE_COMMIT=%s\n' "$INVENTREE_SOURCE_COMMIT"
+        printf 'INVENTREE_SOURCE_ARCHIVE_SHA256=%s\n' "$INVENTREE_SOURCE_ARCHIVE_SHA256"
+        printf 'INVENTREE_IMAGE_ID=%s\n' "$INVENTREE_DEPLOY_IMAGE"
         printf 'PLUGIN_VERSION=%s\n' "$PLUGIN_VERSION"
         printf 'STOCK_PLUGIN_VERSION=%s\n' "$STOCK_PLUGIN_VERSION"
         printf 'PLUGIN_COMMIT=%s\n' "$PLUGIN_COMMIT"
+        printf 'PLUGIN_ARCHIVE_SHA256=%s\n' "$PLUGIN_ARCHIVE_SHA256"
         printf 'TRAINING_DATA=%s\n' "$TRAINING_DATA"
         printf 'TRAINING_DATASET_COMMIT=%s\n' "$TRAINING_DATASET_COMMIT"
     } > "$INSTALLED_TEMP_FILE"
