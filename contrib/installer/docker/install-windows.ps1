@@ -1588,6 +1588,7 @@ function Export-OfflineBundle {
 
     $linuxInstaller = Join-Path $script:ScriptDirectory 'install-linux.sh'
     $readme = Join-Path $script:ScriptDirectory 'README.md'
+    $userGuide = Join-Path $script:ScriptDirectory 'USER-GUIDE.fa.md'
     $wslName = "wsl-$($script:Versions.WSL_VERSION)-x64.msi"
     $dockerName = "DockerDesktop-$($script:Versions.DOCKER_DESKTOP_VERSION)-$($script:Versions.DOCKER_DESKTOP_BUILD)-x64.exe"
     $expectedFiles = @(
@@ -1603,6 +1604,9 @@ function Export-OfflineBundle {
     }
     if (Test-Path -LiteralPath $readme -PathType Leaf) {
         $expectedFiles += 'README.md'
+    }
+    if (Test-Path -LiteralPath $userGuide -PathType Leaf) {
+        $expectedFiles += 'USER-GUIDE.fa.md'
     }
 
     $bundleParent = Split-Path -Parent $BundleDirectory
@@ -1669,6 +1673,9 @@ function Export-OfflineBundle {
         }
         if (Test-Path -LiteralPath $readme -PathType Leaf) {
             Copy-Item -LiteralPath $readme -Destination (Join-Path $staging 'README.md')
+        }
+        if (Test-Path -LiteralPath $userGuide -PathType Leaf) {
+            Copy-Item -LiteralPath $userGuide -Destination (Join-Path $staging 'USER-GUIDE.fa.md')
         }
         Copy-Item -LiteralPath $inventreeSource `
             -Destination (Join-Path $staging 'cache\inventree-source.tar.gz')
@@ -2492,10 +2499,26 @@ function Initialize-TrainingCurrency {
     )
 }
 
+function Initialize-TrainingAccess {
+    Invoke-Compose -ArgumentList @(
+        'run', '--rm', '--entrypoint', 'python', 'inventree-server',
+        'src/backend/InvenTree/manage.py', 'shell', '-c',
+        "from django.contrib.auth import get_user_model; from django.contrib.auth.models import Group; from common.models import InvenTreeUserSetting; from users.models import RuleSet; group, _ = Group.objects.get_or_create(name='انبار قطعات الکترونیک'); roles = {'admin': (False, False, False, False), 'bom': (True, True, True, True), 'build': (True, True, True, False), 'part': (True, True, True, False), 'part_category': (True, True, True, False), 'purchase_order': (True, True, True, False), 'return_order': (False, False, False, False), 'sales_order': (False, False, False, False), 'stock': (True, True, True, False), 'stock_location': (True, True, True, False), 'transfer_order': (False, False, False, False)}; fields = ('can_view', 'can_add', 'can_change', 'can_delete'); [RuleSet.objects.update_or_create(group=group, name=name, defaults=dict(zip(fields, values, strict=True))) for name, values in roles.items()]; user = get_user_model().objects.get(username='engineer'); user.groups.set([group]); user.first_name = 'کاربر'; user.last_name = 'انبار'; user.save(update_fields=['first_name', 'last_name']); user.profile.language = 'fa'; user.profile.widgets = {'widgets': ['low-stk', 'invalid-bom', 'bld-req', 'act-bo', 'act-po'], 'layouts': {'lg': [{'i': 'low-stk', 'x': 0, 'y': 0, 'w': 12, 'h': 2}, {'i': 'invalid-bom', 'x': 0, 'y': 2, 'w': 12, 'h': 2}, {'i': 'bld-req', 'x': 0, 'y': 4, 'w': 12, 'h': 2}, {'i': 'act-bo', 'x': 0, 'y': 6, 'w': 12, 'h': 2}, {'i': 'act-po', 'x': 0, 'y': 8, 'w': 12, 'h': 2}]}}; user.profile.save(update_fields=['language', 'widgets']); [InvenTreeUserSetting.set_setting(key, False, user=user) for key in ('SEARCH_PREVIEW_SHOW_SALES_ORDERS', 'SEARCH_PREVIEW_SHOW_SALES_ORDER_SHIPMENTS', 'SEARCH_PREVIEW_SHOW_RETURN_ORDERS', 'DISPLAY_STOCKTAKE_TAB', 'SHOW_SPOTLIGHT')]"
+    )
+}
+
+function Sync-MinimalProfileSettings {
+    Invoke-Compose -ArgumentList @(
+        'run', '--rm', '--entrypoint', 'python', 'inventree-server',
+        'src/backend/InvenTree/manage.py', 'shell', '-c',
+        "from django.conf import settings; from common.models import InvenTreeSetting; keys = ('INVENTREE_INSTANCE', 'INVENTREE_INSTANCE_TITLE', 'INVENTREE_RESTRICT_ABOUT', 'INVENTREE_SHOW_SUPERUSER_BANNER', 'BARCODE_ENABLE', 'LABEL_ENABLE', 'REPORT_ENABLE', 'MACHINE_PING_ENABLED', 'PROJECT_CODES_ENABLED', 'RETURNORDER_ENABLED', 'TRANSFERORDER_ENABLED', 'STOCKTAKE_ENABLE', 'BUILDORDER_EXTERNAL_BUILDS', 'BUILDORDER_REQUIRE_VALID_BOM', 'PART_COMPONENT', 'PART_PURCHASEABLE', 'PART_SALABLE', 'PART_CREATE_INITIAL', 'PART_CREATE_SUPPLIER', 'PART_INTERNAL_PRICE', 'PART_BOM_USE_INTERNAL_PRICE', 'PURCHASEORDER_CONVERT_CURRENCY', 'LOGIN_ENABLE_PWD_FORGOT'); [InvenTreeSetting.set_setting(key, settings.GLOBAL_SETTINGS_OVERRIDES[key]) for key in keys if key in settings.GLOBAL_SETTINGS_OVERRIDES]"
+    )
+}
+
 function Assert-TrainingData {
     $output = Invoke-Compose -ArgumentList @(
         'exec', '-T', 'inventree-server', 'python', 'src/backend/InvenTree/manage.py', 'shell', '-c',
-        "from django.apps import apps; from django.contrib.auth import get_user_model; expected = {'part.Part': 438, 'stock.StockItem': 1278, 'part.BomItem': 268, 'part.BomItemSubstitute': 4, 'company.Company': 41, 'company.SupplierPart': 780, 'build.Build': 28, 'order.PurchaseOrder': 20, 'order.SalesOrder': 14, 'order.ReturnOrder': 7, 'order.TransferOrder': 5}; actual = {label: apps.get_model(label).objects.count() for label in expected}; assert actual == expected, f'Training record counts do not match: {actual}'; User = get_user_model(); passwords = {'admin': 'inventree', 'allaccess': 'nolimits', 'reader': 'readonly', 'engineer': 'partsonly'}; assert all(User.objects.get(username=name).check_password(password) for name, password in passwords.items()), 'Training accounts are invalid'; print('ok')"
+        "from django.apps import apps; from django.contrib.auth import get_user_model; from django.contrib.auth.models import Group; from users.models import RuleSet; expected = {'part.Part': 438, 'stock.StockItem': 1278, 'part.BomItem': 268, 'part.BomItemSubstitute': 4, 'company.Company': 41, 'company.SupplierPart': 780, 'build.Build': 28, 'order.PurchaseOrder': 20, 'order.SalesOrder': 14, 'order.ReturnOrder': 7, 'order.TransferOrder': 5}; actual = {label: apps.get_model(label).objects.count() for label in expected}; assert actual == expected, f'Training record counts do not match: {actual}'; User = get_user_model(); passwords = {'admin': 'inventree', 'allaccess': 'nolimits', 'reader': 'readonly', 'engineer': 'partsonly'}; assert all(User.objects.get(username=name).check_password(password) for name, password in passwords.items()), 'Training accounts are invalid'; user = User.objects.get(username='engineer'); group = Group.objects.get(name='انبار قطعات الکترونیک'); expected_roles = {'admin': (False, False, False, False), 'bom': (True, True, True, True), 'build': (True, True, True, False), 'part': (True, True, True, False), 'part_category': (True, True, True, False), 'purchase_order': (True, True, True, False), 'return_order': (False, False, False, False), 'sales_order': (False, False, False, False), 'stock': (True, True, True, False), 'stock_location': (True, True, True, False), 'transfer_order': (False, False, False, False)}; actual_roles = {row.name: (row.can_view, row.can_add, row.can_change, row.can_delete) for row in RuleSet.objects.filter(group=group)}; assert actual_roles == expected_roles and list(user.groups.all()) == [group] and user.profile.language == 'fa' and user.profile.widgets.get('widgets') == ['low-stk', 'invalid-bom', 'bld-req', 'act-bo', 'act-po'], 'Training warehouse access profile is invalid'; print('ok')"
     ) -CaptureOutput
     if ((Get-LastOutputLine -Output $output) -ne 'ok') {
         Throw-InstallerError 'Training dataset verification failed'
@@ -2578,7 +2601,9 @@ function Deploy-Application {
     )
     Invoke-Compose -ArgumentList @('run', '--rm', 'inventree-server', 'invoke', 'static')
     Invoke-Compose -ArgumentList @('run', '--rm', 'inventree-server', 'invoke', 'int.clean-settings')
+    Sync-MinimalProfileSettings
     if ($TrainingData) {
+        Initialize-TrainingAccess
         Initialize-TrainingCurrency
     }
 

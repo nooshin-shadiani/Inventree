@@ -124,6 +124,17 @@ For a new learning instance populated with the comprehensive training fixture:
 .\install-windows.ps1 -TrainingData
 ```
 
+On both Linux and Windows, the training profile keeps `root` / other
+administrators for configuration and
+turns the existing `engineer` account into the restricted daily warehouse user
+(`engineer` / `partsonly`). Optional sales, return, transfer, barcode, label,
+machine, report, stocktake, and project-code workflows are disabled by default.
+Parts, stock, BOMs, builds, purchasing, dual-currency pricing, Excel stock
+adjustment, audit history, and backups remain enabled. Change all demonstration
+passwords before non-training use.
+
+See [`USER-GUIDE.fa.md`](USER-GUIDE.fa.md) for the Persian end-user workflow.
+
 The script enables the required Windows features, installs/updates WSL, and can
 download and install the official Docker Desktop WSL2 backend after explicit
 acceptance of Docker's license. A Windows restart may be required; the script
