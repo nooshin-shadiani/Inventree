@@ -1,0 +1,28 @@
+{
+	auto_https off
+}
+
+:80 {
+	encode gzip
+
+	request_body {
+		max_size 100MB
+	}
+
+	handle_path /static/* {
+		root * /var/www/static
+		file_server
+	}
+
+	handle_path /media/* {
+		root * /var/www/media
+		file_server
+		header Content-Disposition attachment
+
+		forward_auth http://inventree-server:8000 {
+			uri /auth/
+		}
+	}
+
+	reverse_proxy http://inventree-server:8000
+}
