@@ -15,6 +15,7 @@ import {
   TextInput,
   Tree,
   type TreeNodeData,
+  useDirection,
   useTree
 } from '@mantine/core';
 import { useDebouncedValue } from '@mantine/hooks';
@@ -67,6 +68,7 @@ export default function NavigationTree({
   const api = useApi();
   const navigate = useNavigate();
   const treeState = useTree();
+  const { dir } = useDirection();
 
   const [searchValue, setSearchValue] = useState('');
   const [debouncedSearch] = useDebouncedValue(searchValue, 300);
@@ -272,7 +274,7 @@ export default function NavigationTree({
         <Group
           p={3}
           gap={5}
-          justify='left'
+          justify='start'
           key={payload.node.value}
           wrap='nowrap'
           bg={isSelected ? 'var(--mantine-primary-color-light)' : undefined}
@@ -354,7 +356,7 @@ export default function NavigationTree({
     <Drawer
       opened={opened}
       size='lg'
-      position='left'
+      position={dir === 'rtl' ? 'right' : 'left'}
       onClose={onClose}
       withCloseButton={true}
       styles={{
@@ -366,7 +368,7 @@ export default function NavigationTree({
         }
       }}
       title={
-        <Group justify='left' p='ms' gap='md' wrap='nowrap'>
+        <Group justify='start' p='ms' gap='md' wrap='nowrap'>
           <IconSitemap />
           <StylishText size='lg'>{title}</StylishText>
         </Group>

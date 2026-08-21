@@ -77,7 +77,7 @@ msgstr "Löschen"
 #: src/components/items/ActionDropdown.tsx:282
 #: src/components/tables/FilterSelectDrawer.tsx:679
 #: src/components/tables/FilterSelectDrawer.tsx:731
-#: src/contexts/ThemeContext.tsx:57
+#: src/contexts/ThemeContext.tsx:64
 #: src/hooks/UseForm.tsx:39
 #: src/pages/Index/Settings/AccountSettings/MFASettings.tsx:148
 #: src/pages/Index/Settings/AccountSettings/MFASettings.tsx:323
@@ -87,7 +87,7 @@ msgid "Cancel"
 msgstr "Abbrechen"
 
 #: lib/components/RowActions.tsx:146
-#: src/components/nav/NavigationDrawer.tsx:185
+#: src/components/nav/NavigationDrawer.tsx:195
 #: src/forms/PurchaseOrderForms.tsx:931
 #: src/forms/StockForms.tsx:911
 #: src/forms/StockForms.tsx:1478
@@ -180,7 +180,7 @@ msgstr "Teil"
 
 #: lib/enums/ModelInformation.tsx:62
 #: lib/enums/Roles.tsx:37
-#: src/components/nav/NavigationDrawer.tsx:70
+#: src/components/nav/NavigationDrawer.tsx:80
 #: src/defaults/links.tsx:39
 #: src/pages/Index/Settings/SystemSettings.tsx:218
 #: src/pages/part/CategoryDetail.tsx:212
@@ -570,7 +570,7 @@ msgid "User"
 msgstr "Nutzer"
 
 #: lib/enums/ModelInformation.tsx:293
-#: src/components/nav/NavigationDrawer.tsx:105
+#: src/components/nav/NavigationDrawer.tsx:115
 #: src/defaults/actions.tsx:222
 #: src/pages/Index/Settings/AdminCenter/UserManagementPanel.tsx:15
 #: src/pages/core/CoreIndex.tsx:22
@@ -584,7 +584,7 @@ msgid "Group"
 msgstr "Gruppe"
 
 #: lib/enums/ModelInformation.tsx:300
-#: src/components/nav/NavigationDrawer.tsx:111
+#: src/components/nav/NavigationDrawer.tsx:121
 #: src/pages/Index/Settings/AdminCenter/UserManagementPanel.tsx:23
 #: src/pages/core/CoreIndex.tsx:28
 #: src/pages/core/GroupDetail.tsx:80
@@ -669,9 +669,9 @@ msgstr ""
 #: src/components/importer/ImporterColumnSelector.tsx:330
 #: src/components/importer/ImporterDrawer.tsx:91
 #: src/components/modals/LicenseModal.tsx:85
-#: src/components/nav/NavigationTree.tsx:398
-#: src/components/nav/NotificationDrawer.tsx:235
-#: src/components/nav/SearchDrawer.tsx:600
+#: src/components/nav/NavigationTree.tsx:400
+#: src/components/nav/NotificationDrawer.tsx:237
+#: src/components/nav/SearchDrawer.tsx:602
 #: src/components/settings/SettingList.tsx:158
 #: src/components/tables/InvenTreeTableHeader.tsx:164
 #: src/components/wizards/ImportPartWizard.tsx:574
@@ -818,7 +818,7 @@ msgstr "Barcode-Daten eingeben"
 
 #: src/components/barcodes/BarcodeScanDialog.tsx:56
 #: src/components/buttons/ScanButton.tsx:56
-#: src/components/nav/NavigationDrawer.tsx:122
+#: src/components/nav/NavigationDrawer.tsx:132
 #: src/forms/PurchaseOrderForms.tsx:534
 #: src/forms/PurchaseOrderForms.tsx:674
 msgid "Scan Barcode"
@@ -1148,7 +1148,7 @@ msgid "Accept Layout"
 msgstr "Layout übernehmen"
 
 #: src/components/dashboard/DashboardMenu.tsx:94
-#: src/components/nav/NavigationDrawer.tsx:64
+#: src/components/nav/NavigationDrawer.tsx:74
 #: src/defaults/actions.tsx:62
 #: src/defaults/links.tsx:34
 #: src/pages/Index/Home.tsx:8
@@ -1405,7 +1405,7 @@ msgid "Change the language of the user interface"
 msgstr "Sprache der Benutzeroberfläche ändern"
 
 #: src/components/dashboard/widgets/NewsWidget.tsx:60
-#: src/components/nav/NotificationDrawer.tsx:94
+#: src/components/nav/NotificationDrawer.tsx:95
 #: src/pages/Notifications.tsx:53
 msgid "Mark as read"
 msgstr "Als gelesen markieren"
@@ -1561,7 +1561,7 @@ msgstr "Leeren"
 
 #: src/components/details/DetailsImage.tsx:305
 #: src/components/forms/ApiForm.tsx:777
-#: src/contexts/ThemeContext.tsx:56
+#: src/contexts/ThemeContext.tsx:63
 #: src/pages/Index/Settings/AccountSettings/MFASettings.tsx:151
 #: src/pages/Index/Settings/AccountSettings/MFASettings.tsx:570
 msgid "Submit"
@@ -2116,7 +2116,7 @@ msgid "API Version"
 msgstr "API-Version"
 
 #: src/components/forms/InstanceOptions.tsx:143
-#: src/components/nav/NavigationDrawer.tsx:192
+#: src/components/nav/NavigationDrawer.tsx:202
 #: src/defaults/actions.tsx:232
 #: src/pages/Index/Settings/AdminCenter/Index.tsx:254
 #: src/pages/Index/Settings/AdminCenter/PluginManagementPanel.tsx:58
@@ -2183,7 +2183,7 @@ msgstr "Nicht kategorisiert"
 
 #: src/components/forms/fields/IconField.tsx:221
 #: src/components/nav/Layout.tsx:144
-#: src/components/nav/NavigationTree.tsx:378
+#: src/components/nav/NavigationTree.tsx:380
 #: src/tables/part/PartThumbTable.tsx:209
 msgid "Search..."
 msgstr "Suchen..."
@@ -2205,7 +2205,7 @@ msgstr "Wird geladen"
 
 #: src/components/forms/fields/RelatedModelField.tsx:552
 #: src/components/forms/fields/TreeField.tsx:414
-#: src/components/nav/NavigationTree.tsx:403
+#: src/components/nav/NavigationTree.tsx:405
 msgid "No results found"
 msgstr "Keine Ergebnisse gefunden"
 
@@ -2233,7 +2233,7 @@ msgstr "Neue Zeile hinzufügen"
 #: src/components/forms/fields/TreeField.tsx:328
 #: src/components/render/Instance.tsx:145
 #: src/components/render/ModelHoverCard.tsx:73
-#: src/components/tables/InvenTreeTable.tsx:810
+#: src/components/tables/InvenTreeTable.tsx:814
 msgid "View details"
 msgstr " Details anzeigen"
 
@@ -2506,7 +2506,7 @@ msgid "Toggle color scheme"
 msgstr "Farbschema umschalten"
 
 #: src/components/items/DocTooltip.tsx:92
-#: src/components/items/GettingStartedCarousel.tsx:20
+#: src/components/items/GettingStartedCarousel.tsx:22
 msgid "Read More"
 msgstr "Mehr lesen"
 
@@ -2523,6 +2523,10 @@ msgstr "Unbekannter Fehler"
 #: src/components/items/GettingStartedCarousel.tsx:27
 #~ msgid "Read more"
 #~ msgstr "Read more"
+
+#: src/components/items/GettingStartedCarousel.tsx:70
+msgid "Slide {currentSlide} of {slideCount}"
+msgstr ""
 
 #: src/components/items/InfoItem.tsx:27
 msgid "None"
@@ -2921,8 +2925,8 @@ msgid "Open search"
 msgstr ""
 
 #: src/components/nav/Header.tsx:210
-#: src/components/nav/NavigationDrawer.tsx:134
-#: src/components/nav/NotificationDrawer.tsx:181
+#: src/components/nav/NavigationDrawer.tsx:144
+#: src/components/nav/NotificationDrawer.tsx:183
 #: src/pages/Index/Settings/SystemSettings.tsx:146
 #: src/pages/Index/Settings/UserSettings.tsx:108
 #: src/pages/Notifications.tsx:45
@@ -2956,7 +2960,7 @@ msgstr "Nichts gefunden..."
 #~ msgstr "Profile"
 
 #: src/components/nav/MainMenu.tsx:54
-#: src/components/nav/NavigationDrawer.tsx:180
+#: src/components/nav/NavigationDrawer.tsx:190
 #: src/pages/Index/Settings/AdminCenter/EmailManagementPanel.tsx:21
 #: src/pages/Index/Settings/AdminCenter/UserManagementPanel.tsx:39
 msgid "Settings"
@@ -2968,7 +2972,7 @@ msgstr "Einstellungen"
 #~ msgstr "Account settings"
 
 #: src/components/nav/MainMenu.tsx:61
-#: src/components/nav/NavigationDrawer.tsx:140
+#: src/components/nav/NavigationDrawer.tsx:150
 #: src/components/nav/SettingsHeader.tsx:40
 #: src/defaults/actions.tsx:106
 #: src/pages/Index/Settings/UserSettings.tsx:145
@@ -2986,7 +2990,7 @@ msgstr "Benutzer-Einstellungen"
 #~ msgstr "Current language {locale}"
 
 #: src/components/nav/MainMenu.tsx:69
-#: src/components/nav/NavigationDrawer.tsx:146
+#: src/components/nav/NavigationDrawer.tsx:156
 #: src/components/nav/SettingsHeader.tsx:41
 #: src/defaults/actions.tsx:193
 #: src/pages/Index/Settings/SystemSettings.tsx:420
@@ -2999,7 +3003,7 @@ msgstr "Einstellungen"
 #~ msgstr "Switch to pseudo language"
 
 #: src/components/nav/MainMenu.tsx:78
-#: src/components/nav/NavigationDrawer.tsx:153
+#: src/components/nav/NavigationDrawer.tsx:163
 #: src/components/nav/SettingsHeader.tsx:42
 #: src/defaults/actions.tsx:202
 #: src/pages/Index/Settings/AdminCenter/Index.tsx:320
@@ -3035,7 +3039,7 @@ msgstr "Abmelden"
 #~ msgid "Pages"
 #~ msgstr "Pages"
 
-#: src/components/nav/NavigationDrawer.tsx:77
+#: src/components/nav/NavigationDrawer.tsx:87
 #: src/components/render/Part.tsx:36
 #: src/components/wizards/ImportPartWizard.tsx:808
 #: src/defaults/links.tsx:47
@@ -3050,7 +3054,7 @@ msgstr "Abmelden"
 msgid "Stock"
 msgstr "Lager"
 
-#: src/components/nav/NavigationDrawer.tsx:84
+#: src/components/nav/NavigationDrawer.tsx:94
 #: src/defaults/links.tsx:57
 #: src/pages/Index/Settings/SystemSettings.tsx:311
 #: src/pages/build/BuildDetail.tsx:593
@@ -3058,7 +3062,7 @@ msgstr "Lager"
 msgid "Manufacturing"
 msgstr "Fertigung"
 
-#: src/components/nav/NavigationDrawer.tsx:91
+#: src/components/nav/NavigationDrawer.tsx:101
 #: src/defaults/links.tsx:63
 #: src/pages/Index/Settings/SystemSettings.tsx:339
 #: src/pages/company/ManufacturerDetail.tsx:9
@@ -3070,7 +3074,7 @@ msgstr "Fertigung"
 msgid "Purchasing"
 msgstr "Einkauf"
 
-#: src/components/nav/NavigationDrawer.tsx:98
+#: src/components/nav/NavigationDrawer.tsx:108
 #: src/defaults/links.tsx:69
 #: src/pages/Index/Settings/SystemSettings.tsx:356
 #: src/pages/company/CustomerDetail.tsx:9
@@ -3081,36 +3085,36 @@ msgstr "Einkauf"
 msgid "Sales"
 msgstr "Verkäufe"
 
-#: src/components/nav/NavigationDrawer.tsx:175
+#: src/components/nav/NavigationDrawer.tsx:185
 msgid "Navigation"
 msgstr "Navigation"
 
-#: src/components/nav/NavigationDrawer.tsx:203
+#: src/components/nav/NavigationDrawer.tsx:213
 msgid "About"
 msgstr "Über uns"
 
-#: src/components/nav/NavigationTree.tsx:388
+#: src/components/nav/NavigationTree.tsx:390
 msgid "Clear search"
 msgstr ""
 
-#: src/components/nav/NavigationTree.tsx:399
+#: src/components/nav/NavigationTree.tsx:401
 msgid "Error loading navigation tree."
 msgstr "Fehler beim Laden des Navigationsbaums."
 
-#: src/components/nav/NotificationDrawer.tsx:183
+#: src/components/nav/NotificationDrawer.tsx:185
 #: src/pages/Notifications.tsx:74
 msgid "Mark all as read"
 msgstr "Alle als gelesen markieren"
 
-#: src/components/nav/NotificationDrawer.tsx:193
+#: src/components/nav/NotificationDrawer.tsx:195
 msgid "View all notifications"
 msgstr "Alle Benachrichtigungen anzeigen"
 
-#: src/components/nav/NotificationDrawer.tsx:216
+#: src/components/nav/NotificationDrawer.tsx:218
 msgid "You have no unread notifications."
 msgstr "Du hast keine ungelesenen Benachrichtigungen. "
 
-#: src/components/nav/NotificationDrawer.tsx:238
+#: src/components/nav/NotificationDrawer.tsx:240
 msgid "Error loading notifications."
 msgstr "Fehler beim Laden der Benachrichtigungen."
 
@@ -3122,27 +3126,27 @@ msgstr "Fehler beim Laden der Benachrichtigungen."
 msgid "Primary Action"
 msgstr ""
 
-#: src/components/nav/SearchDrawer.tsx:112
+#: src/components/nav/SearchDrawer.tsx:113
 msgid "No Overview Available"
 msgstr "Keine Übersicht verfügbar"
 
-#: src/components/nav/SearchDrawer.tsx:113
+#: src/components/nav/SearchDrawer.tsx:114
 msgid "No overview available for this model type"
 msgstr "Keine Übersicht für diesen Modelltyp verfügbar"
 
-#: src/components/nav/SearchDrawer.tsx:131
+#: src/components/nav/SearchDrawer.tsx:132
 msgid "View all results"
 msgstr "Alle Ergebnisse anzeigen"
 
-#: src/components/nav/SearchDrawer.tsx:146
+#: src/components/nav/SearchDrawer.tsx:147
 msgid "results"
 msgstr "Ergebnisse"
 
-#: src/components/nav/SearchDrawer.tsx:150
+#: src/components/nav/SearchDrawer.tsx:151
 msgid "Remove search group"
 msgstr "Suchgruppe entfernen"
 
-#: src/components/nav/SearchDrawer.tsx:305
+#: src/components/nav/SearchDrawer.tsx:307
 #: src/pages/company/ManufacturerPartDetail.tsx:91
 #: src/pages/part/PartDetail.tsx:373
 #: src/pages/part/PartSupplierDetail.tsx:15
@@ -3150,13 +3154,13 @@ msgstr "Suchgruppe entfernen"
 msgid "Suppliers"
 msgstr "Lieferanten"
 
-#: src/components/nav/SearchDrawer.tsx:315
+#: src/components/nav/SearchDrawer.tsx:317
 #: src/pages/part/PartSupplierDetail.tsx:23
 #: src/pages/purchasing/PurchasingIndex.tsx:173
 msgid "Manufacturers"
 msgstr "Hersteller"
 
-#: src/components/nav/SearchDrawer.tsx:325
+#: src/components/nav/SearchDrawer.tsx:327
 #: src/pages/sales/SalesIndex.tsx:175
 msgid "Customers"
 msgstr "Kunden"
@@ -3165,41 +3169,41 @@ msgstr "Kunden"
 #~ msgid "No results"
 #~ msgstr "No results"
 
-#: src/components/nav/SearchDrawer.tsx:505
+#: src/components/nav/SearchDrawer.tsx:507
 msgid "Enter search text"
 msgstr "Suchtext eingeben"
 
-#: src/components/nav/SearchDrawer.tsx:516
+#: src/components/nav/SearchDrawer.tsx:518
 msgid "Refresh search results"
 msgstr "Suchergebnisse aktualisieren"
 
-#: src/components/nav/SearchDrawer.tsx:527
-#: src/components/nav/SearchDrawer.tsx:534
+#: src/components/nav/SearchDrawer.tsx:529
+#: src/components/nav/SearchDrawer.tsx:536
 msgid "Search Options"
 msgstr "Suchoptionen"
 
-#: src/components/nav/SearchDrawer.tsx:537
+#: src/components/nav/SearchDrawer.tsx:539
 msgid "Whole word search"
 msgstr "Volltextsuche"
 
-#: src/components/nav/SearchDrawer.tsx:546
+#: src/components/nav/SearchDrawer.tsx:548
 msgid "Regex search"
 msgstr "Regex Suche"
 
-#: src/components/nav/SearchDrawer.tsx:555
+#: src/components/nav/SearchDrawer.tsx:557
 msgid "Notes search"
 msgstr "Notizen durchsuchen"
 
-#: src/components/nav/SearchDrawer.tsx:603
+#: src/components/nav/SearchDrawer.tsx:605
 msgid "An error occurred during search query"
 msgstr "Bei der Suchanfrage ist ein Fehler aufgetreten"
 
-#: src/components/nav/SearchDrawer.tsx:614
+#: src/components/nav/SearchDrawer.tsx:616
 #: src/tables/part/PartTestTemplateTable.tsx:86
 msgid "No Results"
 msgstr "Keine Ergebnisse"
 
-#: src/components/nav/SearchDrawer.tsx:617
+#: src/components/nav/SearchDrawer.tsx:619
 msgid "No results available for search query"
 msgstr "Keine Ergebnisse für Suchanfrage verfügbar"
 
@@ -4374,25 +4378,28 @@ msgstr ""
 #~ msgid "Select from the available filters"
 #~ msgstr "Select from the available filters"
 
-#: src/components/tables/InvenTreeTable.tsx:53
-#: src/components/tables/InvenTreeTable.tsx:585
-msgid "No records found"
-msgstr "Keine Einträge gefunden"
-
 #: src/components/tables/InvenTreeTable.tsx:167
 msgid "Error loading table options"
 msgstr "Fehler beim Laden der Tabellenoptionen"
 
-#: src/components/tables/InvenTreeTable.tsx:630
+#: src/components/tables/InvenTreeTable.tsx:584
+msgid "No records found"
+msgstr "Keine Einträge gefunden"
+
+#: src/components/tables/InvenTreeTable.tsx:634
 msgid "Server returned incorrect data type"
 msgstr "Der Server hat einen falschen Datentyp zurückgegeben"
 
-#: src/components/tables/InvenTreeTable.tsx:663
+#: src/components/tables/InvenTreeTable.tsx:667
 msgid "Error loading table data"
 msgstr "Fehler beim Laden der Tabellendaten"
 
-#: src/components/tables/InvenTreeTable.tsx:813
+#: src/components/tables/InvenTreeTable.tsx:817
 msgid "View {model}"
+msgstr ""
+
+#: src/components/tables/InvenTreeTable.tsx:857
+msgid "Records per page"
 msgstr ""
 
 #: src/components/tables/InvenTreeTableHeader.tsx:130
@@ -13689,4 +13696,3 @@ msgstr "Dokumentation lesen"
 #: src/views/MobileAppView.tsx:42
 msgid "Ignore and continue to Desktop view"
 msgstr "Ignorieren und weiter zur Desktopansicht"
-

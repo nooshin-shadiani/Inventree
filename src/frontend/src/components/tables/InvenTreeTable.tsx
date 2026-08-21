@@ -16,7 +16,7 @@ import type {
   TableState
 } from '@lib/types/Tables';
 import type { TableColumn } from '@lib/types/Tables';
-import { t } from '@lingui/core/macro';
+import { useLingui } from '@lingui/react/macro';
 import { ActionIcon, Box, Stack } from '@mantine/core';
 import { IconArrowRight, IconClick } from '@tabler/icons-react';
 import { useQuery } from '@tanstack/react-query';
@@ -50,7 +50,6 @@ const PAGE_SIZES = [10, 15, 20, 25, 50, 100, 500];
  */
 const defaultInvenTreeTableProps: InvenTreeTableProps = {
   params: {},
-  noRecordsText: t`No records found`,
   enableDownload: false,
   enableLabels: false,
   enableReports: false,
@@ -89,6 +88,7 @@ export function InvenTreeTableInternal<T extends Record<string, any>>({
   searchParams,
   setSearchParams
 }: Readonly<InvenTreeTableRenderProps<T>>) {
+  const { t } = useLingui();
   const { userTheme } = useLocalState();
 
   const {
@@ -581,9 +581,13 @@ export function InvenTreeTableInternal<T extends Record<string, any>>({
   }
 
   // Missing records text (based on server response)
-  const [missingRecordsText, setMissingRecordsText] = useState<string>(
-    tableProps.noRecordsText ?? t`No records found`
-  );
+  const noRecordsText = tableProps.noRecordsText ?? t`No records found`;
+  const [missingRecordsText, setMissingRecordsText] =
+    useState<string>(noRecordsText);
+
+  useEffect(() => {
+    setMissingRecordsText(noRecordsText);
+  }, [noRecordsText]);
 
   const handleSortStatusChange = useCallback(
     (status: DataTableSortStatus<T>) => {
@@ -850,6 +854,8 @@ export function InvenTreeTableInternal<T extends Record<string, any>>({
     tableState.refreshTable();
   }, []);
 
+  const recordsPerPageLabel = t`Records per page`;
+
   /**
    * Memoize row expansion options:
    * - If rowExpansion is not provided, return undefined
@@ -888,6 +894,7 @@ export function InvenTreeTableInternal<T extends Record<string, any>>({
         page: Math.max(1, tableState.page),
         onPageChange: tableState.setPage,
         recordsPerPageOptions: PAGE_SIZES,
+        recordsPerPageLabel,
         onRecordsPerPageChange: updatePageSize
       };
     }
@@ -899,6 +906,7 @@ export function InvenTreeTableInternal<T extends Record<string, any>>({
     tableState.recordCount,
     tableState.page,
     tableState.setPage,
+    recordsPerPageLabel,
     updatePageSize
   ]);
 

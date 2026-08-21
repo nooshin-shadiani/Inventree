@@ -1,6 +1,7 @@
 import { msg } from '@lingui/core/macro';
 import { Trans } from '@lingui/react';
 import {
+  DirectionProvider,
   MantineProvider,
   type MantineThemeOverride,
   createTheme
@@ -18,6 +19,11 @@ import { ServerInfoModal } from '../components/modals/ServerInfoModal';
 import { useLocalState } from '../states/LocalState';
 import { LanguageContext } from './LanguageContext';
 import { colorSchema } from './colorSchema';
+
+const initialDirection =
+  typeof document !== 'undefined' && document.documentElement.dir === 'rtl'
+    ? 'rtl'
+    : 'ltr';
 
 export function ThemeContext({
   children
@@ -48,27 +54,29 @@ export function ThemeContext({
   }
 
   return (
-    <MantineProvider theme={customUserTheme} colorSchemeManager={colorSchema}>
-      <ContextMenuProvider>
-        <LanguageContext>
-          <ModalsProvider
-            labels={{
-              confirm: <Trans id={msg`Submit`.id} />,
-              cancel: <Trans id={msg`Cancel`.id} />
-            }}
-            modals={{
-              info: ServerInfoModal,
-              about: AboutInvenTreeModal,
-              license: LicenseModal,
-              qr: QrModal,
-              hotkey: HotkeyModal
-            }}
-          >
-            <Notifications />
-            {children}
-          </ModalsProvider>
-        </LanguageContext>
-      </ContextMenuProvider>
-    </MantineProvider>
+    <DirectionProvider initialDirection={initialDirection}>
+      <MantineProvider theme={customUserTheme} colorSchemeManager={colorSchema}>
+        <ContextMenuProvider>
+          <LanguageContext>
+            <ModalsProvider
+              labels={{
+                confirm: <Trans id={msg`Submit`.id} />,
+                cancel: <Trans id={msg`Cancel`.id} />
+              }}
+              modals={{
+                info: ServerInfoModal,
+                about: AboutInvenTreeModal,
+                license: LicenseModal,
+                qr: QrModal,
+                hotkey: HotkeyModal
+              }}
+            >
+              <Notifications />
+              {children}
+            </ModalsProvider>
+          </LanguageContext>
+        </ContextMenuProvider>
+      </MantineProvider>
+    </DirectionProvider>
   );
 }

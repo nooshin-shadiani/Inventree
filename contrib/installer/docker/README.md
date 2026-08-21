@@ -13,12 +13,13 @@ Prepare once on a connected machine, then reuse the resulting platform-specific
 bundle for multiple clean offline installs on the same supported platform and
 CPU architecture. The first online run retains this bundle by default.
 
-Every bundle contains the four container images, pinned plugin-suite source,
-the pinned official InvenTree training dataset, deployment files, version
-manifest, and SHA-256 manifest. Linux bundles also contain the matching Docker
-Engine and Compose packages when the preparation host is a supported Ubuntu or
-Debian release. Windows bundles contain the pinned WSL and Docker Desktop
-installers.
+Every format-v4 bundle contains the four container images, the commit-pinned
+Persian InvenTree fork source used to build the application image, pinned
+plugin-suite source, the pinned official InvenTree training dataset, deployment
+files, version manifest, and SHA-256 manifest. Linux bundles also contain the
+matching Docker Engine and Compose packages when the preparation host is a
+supported Ubuntu or Debian release. Windows bundles contain the pinned WSL and
+Docker Desktop installers.
 
 The generated bundle—not this Git checkout—is the complete offline installation
 media. Copy the whole bundle directory to a USB drive or other local storage.
@@ -45,7 +46,7 @@ cd contrib/installer/docker
 
 The default deployment directory is `~/InvenTree`, the site is bound only to
 `http://localhost:8000`, and the reusable bundle is written to
-`~/InvenTree/offline-bundle`. To prepare removable media without deploying:
+`~/InvenTree/offline-bundle-v4`. To prepare removable media without deploying:
 
 ```bash
 ./install-linux.sh \
@@ -106,18 +107,33 @@ UEFI/BIOS setting, so the installer cannot enable it for you.
 If Windows itself is running inside a virtual machine, the host hypervisor must
 also expose nested virtualization to that VM.
 
-From an elevated PowerShell 5.1 or newer prompt:
+From a PowerShell 5.1 or newer prompt (the script requests administrator
+approval only when it enables the Windows features):
 
 ```powershell
 Set-ExecutionPolicy -Scope Process Bypass
 .\install-windows.ps1
 ```
 
+The default reusable bundle is written to
+`%USERPROFILE%\InvenTree\offline-bundle-windows-amd64-v4`.
+
 For a new learning instance populated with the comprehensive training fixture:
 
 ```powershell
 .\install-windows.ps1 -TrainingData
 ```
+
+On both Linux and Windows, the training profile keeps `root` / other
+administrators for configuration and
+turns the existing `engineer` account into the restricted daily warehouse user
+(`engineer` / `partsonly`). Optional sales, return, transfer, barcode, label,
+machine, report, stocktake, and project-code workflows are disabled by default.
+Parts, stock, BOMs, builds, purchasing, dual-currency pricing, Excel stock
+adjustment, audit history, and backups remain enabled. Change all demonstration
+passwords before non-training use.
+
+See [`USER-GUIDE.fa.md`](USER-GUIDE.fa.md) for the Persian end-user workflow.
 
 The script enables the required Windows features, installs/updates WSL, and can
 download and install the official Docker Desktop WSL2 backend after explicit
@@ -158,6 +174,11 @@ Run the platform's `--prepare-only` / `-PrepareOnly` command once on a connected
 preparation computer. Do not copy only the installer script: keep the entire
 generated directory together.
 
+Default bundle directory names include the installer format version. This
+preserves complete older media when a newer format adds required files. If you
+provide `--bundle-dir` / `-BundleDirectory` explicitly, use a new directory
+when moving to another bundle format.
+
 The Linux bundle contains:
 
 - `images-linux-<architecture>.tar`: the prebuilt InvenTree-with-plugins,
@@ -165,8 +186,11 @@ The Linux bundle contains:
 - `prerequisites/linux-<distribution>-<release>-<architecture>/packages/`:
   Docker Engine, Docker CLI, containerd, Buildx, Compose, and their resolved
   `.deb` dependencies for that exact supported Ubuntu/Debian target;
-- the plugin-suite source, official training dataset, Compose/Caddy
-  configuration, manifests, and checksums.
+- `cache/inventree-source.tar.gz`: the SHA-256-pinned Persian InvenTree fork
+  source used for the canonical production image build;
+- `cache/plugin-source.tar.gz` and `cache/training-dataset.tar.gz`: the pinned
+  plugin suite and official training fixture;
+- Compose/Caddy configuration, manifests, and checksums.
 
 The private Windows bundle contains:
 
@@ -174,8 +198,10 @@ The private Windows bundle contains:
 - `prerequisites/windows/DockerDesktop-*.exe`: the pinned, signed Docker
   Desktop installer;
 - `prerequisites/windows/wsl-*.msi`: the pinned, signed WSL installer;
-- the plugin-suite source, official training dataset, Compose/Caddy
-  configuration, manifests, and checksums.
+- `cache/inventree-source.tar.gz`, `cache/plugin-source.tar.gz`, and
+  `cache/training-dataset.tar.gz`: the pinned Persian fork, plugin suite, and
+  official training fixture;
+- Compose/Caddy configuration, manifests, and checksums.
 
 The offline installer loads the image archive automatically. To load only the
 images yourself after Docker is installed, run:
@@ -198,14 +224,17 @@ grants explicit redistribution permission.
 ## What happens during installation
 
 1. The installer verifies Docker Engine and Compose v2 in Linux-container mode.
-2. Online mode downloads the commit-pinned plugin suite, pulls digest-pinned
-   base images, and builds one InvenTree image with both plugins installed.
-3. The images are tagged with installer-owned names. Offline mode instead
-   checks `SHA256SUMS`, loads the saved image archive, and verifies every image
-   ID before use.
-4. A random 256-bit PostgreSQL password is written to a new private `.env`.
-   Existing `.env`, Compose/Caddy files, and application data are never
-   overwritten.
+2. Online mode downloads and verifies the commit-pinned Persian InvenTree fork
+   and plugin-suite archives. It builds InvenTree's canonical production target
+   from that source, then layers both plugins onto the resulting core image.
+   PostgreSQL, Redis, and Caddy remain digest-pinned vendor images.
+3. The commit-addressed core and runtime tags are build handles. Deployment and
+   offline manifests use the resulting immutable image IDs. Offline mode checks
+   `SHA256SUMS`, loads the saved image archive, and verifies every ID before use.
+4. A fresh install writes a random 256-bit PostgreSQL password to a private
+   `.env`. An upgrade preserves secrets, custom configuration, and application
+   data while atomically migrating only recognized installer-owned image
+   references and legacy plugin settings.
 5. Database migrations and static-file collection run without package downloads.
    Existing installations are backed up before migration.
 6. If training data was explicitly requested for a new empty installation, the
@@ -220,6 +249,62 @@ data, secrets, uploaded files, plugin settings, and backups are stored under
 `<install-directory>/inventree-data`. Copy that directory to separate storage;
 the offline image archive is software installation media, not a backup of your
 inventory.
+
+### Fresh installations and upgrades
+
+A fresh format-v4 installation creates a new `.env`, defaults the application
+to Persian, and imports the training fixture only when explicitly requested.
+It deploys the application, database, cache, and proxy by immutable image ID.
+
+For an existing installer-owned installation, format v4 accepts these two
+reviewed amd64 prior application image IDs for a controlled v3-to-v4 upgrade:
+
+```text
+sha256:47af9a7b9c8753b1cafb1c178745813f5e918fae72b9f7f033e30d298ca1aaa4
+sha256:954fc7ee037d722db7f049fd1523b1c5bce4ee842593319b55b761a3c5bdec3d
+```
+
+These are the complete automatic v3 upgrade allowlist. An unknown prior image
+ID, including an unreviewed ARM64 build, fails closed and requires either a
+fresh installation or an explicitly reviewed manual migration.
+
+The installer backs up persistent data before migrations and replaces the
+recognized application image reference with the new v4 image ID. It preserves
+the database, media, backups, credentials, port, language choice, and valid
+custom settings. An unknown or manually customized image reference is rejected
+with an actionable error instead of being replaced. Training data is never
+imported during an upgrade, and a format-v3 bundle is not accepted as v4 media.
+After installation or upgrade, same-v4 reruns use the immutable application
+image ID recorded in the installation marker rather than treating the current
+runtime tag as upgrade authority.
+
+## Persian language default
+
+New Linux and Windows installations set `INVENTREE_LANGUAGE=fa`, so `fa` is the
+default backend and frontend locale. A user can still select another language
+from the language menu. Upgrades preserve the existing language choice; to opt
+in, set `INVENTREE_LANGUAGE=fa` in the private `.env` before recreating the
+server, worker, and proxy containers.
+
+Format v4 builds the application from Persian fork commit
+`2099278fff60c89b7296a2c1b42ff6c284418dc3`. It includes completed Persian
+Django gettext and React/Lingui catalogs, right-to-left document and Mantine
+layout support, and localized replacements for component-library labels which
+otherwise remain hard-coded in English. Non-Persian locales retain their normal
+translations and English fallback behavior.
+
+Plugin suite commit `b114ce8c64fd78499ea165e6977ecb10eb873224` also localizes
+the USD/IRT and stock-adjustment interfaces when Persian is active, with
+English fallback for other locales. Machine-readable XLSX column names and
+operation values remain stable English API contracts. The optional demo
+fixture's part, company, location, and order names also remain English because
+they are imported sample data, not untranslated interface text.
+
+Currency plugin 1.3.3 freezes both USD and IRT values when a supplier,
+internal, sale, or manual override price is saved. Later exchange-rate updates
+do not change that paired value. Its migration also freezes pre-existing prices
+once, using the rate applied at upgrade time, because an earlier historical
+rate cannot be reconstructed truthfully.
 
 ## Comprehensive training fixture
 
@@ -243,7 +328,8 @@ The pinned fixture currently includes:
 It also contains parameters, related parts, stock history, test results,
 attachments, reports, labels, users, groups, and permission rules. The
 installer verifies the key record counts and account passwords before marking
-the installation complete.
+the installation complete. These demo record names and descriptions remain in
+English even when the surrounding application interface is Persian.
 
 | Username | Password | Role to explore |
 | --- | --- | --- |
@@ -344,22 +430,36 @@ No extra plugin is needed for these workflows:
 
 ## Version and network notes
 
-The plugins require InvenTree 1.6.0 or newer. At the time this installer was
-created, the official stable image was still InvenTree 1.5.0, so
-`versions.env` deliberately pins a reviewed InvenTree 1.6 development image by
-digest. Update that pin to a tested 1.6 stable digest when it is released.
+The plugins require InvenTree 1.6.0 or newer. Format v4 does not place the
+Persian changes over a prebuilt official application image. `versions.env`
+pins fork commit `2099278fff60c89b7296a2c1b42ff6c284418dc3`, its source URL
+and SHA-256, plugin-suite commit
+`b114ce8c64fd78499ea165e6977ecb10eb873224`, and its SHA-256. Preparation
+builds the canonical InvenTree production image from that exact fork source,
+verifies its revision label, adds the two pinned plugins, and records the final
+image ID. Regenerate and review format-v4 media whenever either source pin
+changes.
+
+These pins establish source provenance, not a guarantee of byte-for-byte image
+reproducibility. The canonical container Dockerfile consumes distribution APT
+repositories and resolves a configured `NODE_VERSION` major, so rebuilding the
+same commits later can produce a different image ID. Preserve the verified v4
+bundle, its checksums, and its recorded immutable image IDs as one release
+artifact; review any newly prepared bundle even when its source commits match.
 
 Online preparation needs access to GitHub, Docker's package/download hosts,
-and Docker Hub. In regions where Docker Hub is filtered, prepare the offline
+Docker Hub, and the package hosts used by the canonical InvenTree image build.
+The offline target needs none of those services when the complete verified v4
+bundle already contains Docker prerequisites for that target and all four
+application-stack images. In regions where Docker Hub is filtered, prepare the
 bundle on a connected machine matching the target platform and CPU, then
-transfer it. Reuse a bundle only on the platform and architecture recorded in
-its manifest; cached Linux Docker packages additionally require the exact
-distribution and release recorded with those prerequisites. Regenerate and
-review the bundle whenever the pinned application images, plugin suite, or
-prerequisite versions change; retained software does not receive security
-updates automatically. The offline checksums detect accidental corruption;
-they are not a third-party signature or a substitute for obtaining this
-repository from a trusted source.
+transfer it.
+Reuse a bundle only on the platform and architecture recorded in its manifest;
+cached Linux Docker packages additionally require the exact distribution and
+release recorded with those prerequisites. Retained software does not receive
+security updates automatically. The offline checksums detect accidental
+corruption; they are not a third-party signature or a substitute for obtaining
+this repository from a trusted source.
 
 Docker-published ports can bypass some host firewall rules. The default bind is
 localhost-only. Before changing `INVENTREE_BIND_ADDRESS` to `0.0.0.0`, configure
@@ -391,6 +491,8 @@ persistent inventory and backups are intentionally being destroyed.
 
 - [InvenTree Docker installation](https://docs.inventree.org/en/latest/start/docker/)
 - [InvenTree plugin installation](https://docs.inventree.org/en/latest/plugins/install/)
+- [Pinned Persian InvenTree fork source](https://github.com/nooshin-shadiani/Inventree/commit/2099278fff60c89b7296a2c1b42ff6c284418dc3)
+- [Pinned InvenTree plugin suite](https://github.com/nooshin-shadiani/inventree-plugins/commit/b114ce8c64fd78499ea165e6977ecb10eb873224)
 - [Official InvenTree demo dataset](https://github.com/inventree/demo-dataset)
 - [Docker Engine for Ubuntu](https://docs.docker.com/engine/install/ubuntu/)
 - [Docker Engine for Debian](https://docs.docker.com/engine/install/debian/)

@@ -1,7 +1,7 @@
 import { i18n } from '@lingui/core';
 import { I18nProvider } from '@lingui/react';
-import { LoadingOverlay, Text } from '@mantine/core';
-import { type JSX, useEffect, useRef, useState } from 'react';
+import { LoadingOverlay, Text, useDirection } from '@mantine/core';
+import { type JSX, useEffect, useState } from 'react';
 
 import { useStoredTableState } from '@lib/states/StoredTableState';
 import { useShallow } from 'zustand/react/shallow';
@@ -12,6 +12,11 @@ import { useServerApiState } from '../states/ServerApiState';
 import { fetchGlobalStates } from '../states/states';
 
 export const defaultLocale = 'en';
+
+const initialDocumentLocale =
+  typeof document === 'undefined' ? null : document.documentElement.lang;
+
+const rtlLocales = new Set(['ar', 'fa', 'he']);
 
 /*
  * Function which returns a record of supported languages.
@@ -60,54 +65,59 @@ export const getSupportedLanguages = (): Record<string, string> => {
   };
 };
 
+function getSupportedLocale(locale: string | null | undefined): string | null {
+  if (!locale) {
+    return null;
+  }
+
+  const normalizedLocale = locale.replaceAll('_', '-').toLowerCase();
+  const supportedLocales = Object.keys(getSupportedLanguages());
+
+  const exactMatch = supportedLocales.find(
+    (supportedLocale) =>
+      supportedLocale.replaceAll('_', '-').toLowerCase() === normalizedLocale
+  );
+
+  if (exactMatch) {
+    return exactMatch;
+  }
+
+  const baseLocale = normalizedLocale.split('-')[0];
+  return (
+    supportedLocales.find(
+      (supportedLocale) => supportedLocale === baseLocale
+    ) ?? null
+  );
+}
+
+export function getLocaleDirection(locale: string | null): 'ltr' | 'rtl' {
+  const activeLocale = locale || getPriorityLocale();
+  const baseLocale = activeLocale.split(/[-_]/)[0].toLowerCase();
+
+  return rtlLocales.has(baseLocale) ? 'rtl' : 'ltr';
+}
+
 export function LanguageContext({
   children
 }: Readonly<{ children: JSX.Element }>) {
   const [language] = useLocalState(useShallow((state) => [state.language]));
   const [server] = useServerApiState(useShallow((state) => [state.server]));
-
-  const [activeLocale, setActiveLocale] = useState<string | null>(null);
-
-  useEffect(() => {
-    // Update the locale based on prioritization:
-    // 1. Locally selected locale
-    // 2. Server default locale
-    // 3. English (fallback)
-
-    let locale: string | null = activeLocale;
-
-    if (!!language) {
-      locale = language;
-    } else if (!!server.default_locale) {
-      locale = server.default_locale;
-    } else {
-      locale = defaultLocale;
-    }
-
-    if (locale != activeLocale) {
-      setActiveLocale(locale);
-      activateLocale(locale);
-    }
-  }, [activeLocale, language, server.default_locale, defaultLocale]);
+  const { setDirection } = useDirection();
 
   const [loadedState, setLoadedState] = useState<
     'loading' | 'loaded' | 'error'
   >('loading');
-  const isMounted = useRef(true);
 
   useEffect(() => {
-    isMounted.current = true;
+    let isActive = true;
+    const lang = getPriorityLocale();
 
-    let lang: string = language || defaultLocale;
-
-    // Ensure that the selected language is supported
-    if (!Object.keys(getSupportedLanguages()).includes(lang)) {
-      lang = defaultLocale;
-    }
+    document.documentElement.lang = lang.replaceAll('_', '-');
+    setDirection(getLocaleDirection(lang));
 
     activateLocale(lang)
       .then(() => {
-        if (isMounted.current) setLoadedState('loaded');
+        if (isActive) setLoadedState('loaded');
 
         /*
          * Configure the default Accept-Language header for all requests.
@@ -115,24 +125,13 @@ export function LanguageContext({
          * - Server default locale
          * - en-us (backup)
          */
-        const locales: (string | undefined)[] = [];
+        const locales = [lang, server.default_locale, 'en-us']
+          .filter(
+            (locale): locale is string => !!locale && locale !== 'pseudo-LOCALE'
+          )
+          .map((locale) => locale.replaceAll('_', '-').toLowerCase());
 
-        if (!!lang && lang != 'pseudo-LOCALE') {
-          locales.push(lang);
-        }
-
-        if (!!server.default_locale) {
-          locales.push(server.default_locale);
-        }
-
-        if (locales.indexOf('en-us') < 0) {
-          locales.push('en-us');
-        }
-
-        // Ensure that the locales are properly formatted
-        const new_locales = locales
-          .map((locale) => locale?.replaceAll('_', '-').toLowerCase())
-          .join(', ');
+        const new_locales = [...new Set(locales)].join(', ');
 
         if (new_locales == api.defaults.headers.common['Accept-Language']) {
           return;
@@ -153,13 +152,13 @@ export function LanguageContext({
       /* istanbul ignore next */
       .catch((err) => {
         console.error('ERR: Failed loading translations', err);
-        if (isMounted.current) setLoadedState('error');
+        if (isActive) setLoadedState('error');
       });
 
     return () => {
-      isMounted.current = false;
+      isActive = false;
     };
-  }, [language]);
+  }, [language, server.default_locale, setDirection]);
 
   if (loadedState === 'loading') {
     return <LoadingOverlay visible={true} />;
@@ -185,7 +184,20 @@ export function getPriorityLocale(): string {
   const serverDefault = useServerApiState.getState().server.default_locale;
   const userDefault = useLocalState.getState().language;
 
-  return userDefault || serverDefault || defaultLocale;
+  for (const locale of [
+    userDefault,
+    serverDefault,
+    initialDocumentLocale,
+    defaultLocale
+  ]) {
+    const supportedLocale = getSupportedLocale(locale);
+
+    if (supportedLocale) {
+      return supportedLocale;
+    }
+  }
+
+  return defaultLocale;
 }
 
 export async function activateLocale(locale: string | null) {
