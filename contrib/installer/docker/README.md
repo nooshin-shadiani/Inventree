@@ -287,13 +287,13 @@ in, set `INVENTREE_LANGUAGE=fa` in the private `.env` before recreating the
 server, worker, and proxy containers.
 
 Format v4 builds the application from Persian fork commit
-`2099278fff60c89b7296a2c1b42ff6c284418dc3`. It includes completed Persian
+`a25072fbc3531e15038ff1b16a3eaab5b7864b4b`. It includes completed Persian
 Django gettext and React/Lingui catalogs, right-to-left document and Mantine
 layout support, and localized replacements for component-library labels which
 otherwise remain hard-coded in English. Non-Persian locales retain their normal
 translations and English fallback behavior.
 
-Plugin suite commit `b114ce8c64fd78499ea165e6977ecb10eb873224` also localizes
+Plugin suite commit `f6397840cd07a1b63768c3d8dbd54e2288a0142e` also localizes
 the USD/IRT and stock-adjustment interfaces when Persian is active, with
 English fallback for other locales. Machine-readable XLSX column names and
 operation values remain stable English API contracts. The optional demo
@@ -432,9 +432,9 @@ No extra plugin is needed for these workflows:
 
 The plugins require InvenTree 1.6.0 or newer. Format v4 does not place the
 Persian changes over a prebuilt official application image. `versions.env`
-pins fork commit `2099278fff60c89b7296a2c1b42ff6c284418dc3`, its source URL
+pins fork commit `a25072fbc3531e15038ff1b16a3eaab5b7864b4b`, its source URL
 and SHA-256, plugin-suite commit
-`b114ce8c64fd78499ea165e6977ecb10eb873224`, and its SHA-256. Preparation
+`f6397840cd07a1b63768c3d8dbd54e2288a0142e`, and its SHA-256. Preparation
 builds the canonical InvenTree production image from that exact fork source,
 verifies its revision label, adds the two pinned plugins, and records the final
 image ID. Regenerate and review format-v4 media whenever either source pin
@@ -491,8 +491,8 @@ persistent inventory and backups are intentionally being destroyed.
 
 - [InvenTree Docker installation](https://docs.inventree.org/en/latest/start/docker/)
 - [InvenTree plugin installation](https://docs.inventree.org/en/latest/plugins/install/)
-- [Pinned Persian InvenTree fork source](https://github.com/nooshin-shadiani/Inventree/commit/2099278fff60c89b7296a2c1b42ff6c284418dc3)
-- [Pinned InvenTree plugin suite](https://github.com/nooshin-shadiani/inventree-plugins/commit/b114ce8c64fd78499ea165e6977ecb10eb873224)
+- [Pinned Persian InvenTree fork source](https://github.com/nooshin-shadiani/Inventree/commit/a25072fbc3531e15038ff1b16a3eaab5b7864b4b)
+- [Pinned InvenTree plugin suite](https://github.com/nooshin-shadiani/inventree-plugins/commit/f6397840cd07a1b63768c3d8dbd54e2288a0142e)
 - [Official InvenTree demo dataset](https://github.com/inventree/demo-dataset)
 - [Docker Engine for Ubuntu](https://docs.docker.com/engine/install/ubuntu/)
 - [Docker Engine for Debian](https://docs.docker.com/engine/install/debian/)
