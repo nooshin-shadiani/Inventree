@@ -293,18 +293,20 @@ layout support, and localized replacements for component-library labels which
 otherwise remain hard-coded in English. Non-Persian locales retain their normal
 translations and English fallback behavior.
 
-Plugin suite commit `f6397840cd07a1b63768c3d8dbd54e2288a0142e` also localizes
+Plugin suite commit `3b7e156f61c47e6fdaea89f05efc2f928ad9fb68` also localizes
 the USD/IRT and stock-adjustment interfaces when Persian is active, with
 English fallback for other locales. Machine-readable XLSX column names and
 operation values remain stable English API contracts. The optional demo
 fixture's part, company, location, and order names also remain English because
 they are imported sample data, not untranslated interface text.
 
-Currency plugin 1.3.3 freezes both USD and IRT values when a supplier,
-internal, sale, or manual override price is saved. Later exchange-rate updates
-do not change that paired value. Its migration also freezes pre-existing prices
-once, using the rate applied at upgrade time, because an earlier historical
-rate cannot be reconstructed truthfully.
+Currency plugin 1.4.0 freezes both USD and IRT values when a supplier,
+internal, sale, manual override, or purchase-order line unit price is saved.
+Later exchange-rate updates do not change that paired value. Part and purchase
+order pages expose the saved pairs through permission-checked panels. Its
+migrations also freeze pre-existing prices once, using the rate applied at
+upgrade time, because an earlier historical rate cannot be reconstructed
+truthfully.
 
 ## Comprehensive training fixture
 
@@ -434,7 +436,7 @@ The plugins require InvenTree 1.6.0 or newer. Format v4 does not place the
 Persian changes over a prebuilt official application image. `versions.env`
 pins fork commit `a25072fbc3531e15038ff1b16a3eaab5b7864b4b`, its source URL
 and SHA-256, plugin-suite commit
-`f6397840cd07a1b63768c3d8dbd54e2288a0142e`, and its SHA-256. Preparation
+`3b7e156f61c47e6fdaea89f05efc2f928ad9fb68`, and its SHA-256. Preparation
 builds the canonical InvenTree production image from that exact fork source,
 verifies its revision label, adds the two pinned plugins, and records the final
 image ID. Regenerate and review format-v4 media whenever either source pin
@@ -492,7 +494,7 @@ persistent inventory and backups are intentionally being destroyed.
 - [InvenTree Docker installation](https://docs.inventree.org/en/latest/start/docker/)
 - [InvenTree plugin installation](https://docs.inventree.org/en/latest/plugins/install/)
 - [Pinned Persian InvenTree fork source](https://github.com/nooshin-shadiani/Inventree/commit/a25072fbc3531e15038ff1b16a3eaab5b7864b4b)
-- [Pinned InvenTree plugin suite](https://github.com/nooshin-shadiani/inventree-plugins/commit/f6397840cd07a1b63768c3d8dbd54e2288a0142e)
+- [Pinned InvenTree plugin suite](https://github.com/nooshin-shadiani/inventree-plugins/commit/3b7e156f61c47e6fdaea89f05efc2f928ad9fb68)
 - [Official InvenTree demo dataset](https://github.com/inventree/demo-dataset)
 - [Docker Engine for Ubuntu](https://docs.docker.com/engine/install/ubuntu/)
 - [Docker Engine for Debian](https://docs.docker.com/engine/install/debian/)
