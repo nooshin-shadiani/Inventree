@@ -221,7 +221,7 @@ release_export_lock() {
 
 load_versions() {
     local versions_file="$1"
-    local allowed_keys=' INSTALLER_FORMAT_VERSION INVENTREE_BASE_SOURCE INVENTREE_RUNTIME_IMAGE INVENTREE_SOURCE_COMMIT INVENTREE_SOURCE_ARCHIVE_NAME INVENTREE_SOURCE_ARCHIVE_URL INVENTREE_SOURCE_ARCHIVE_SHA256 INVENTREE_PREVIOUS_IMAGE_IDS POSTGRES_SOURCE POSTGRES_RUNTIME_IMAGE REDIS_SOURCE REDIS_RUNTIME_IMAGE CADDY_SOURCE CADDY_RUNTIME_IMAGE PLUGIN_VERSION PLUGIN_COMMIT PLUGIN_ARCHIVE_NAME PLUGIN_ARCHIVE_URL PLUGIN_ARCHIVE_SHA256 PLUGIN_ARCHIVE_SUBDIRECTORY STOCK_PLUGIN_VERSION STOCK_PLUGIN_ARCHIVE_SUBDIRECTORY TRAINING_DATASET_COMMIT TRAINING_DATASET_ARCHIVE_NAME TRAINING_DATASET_ARCHIVE_URL TRAINING_DATASET_ARCHIVE_SHA256 TRAINING_USD_IRT_RATE DOCKER_DESKTOP_VERSION DOCKER_DESKTOP_BUILD DOCKER_DESKTOP_URL DOCKER_DESKTOP_SHA256 WSL_VERSION WSL_URL WSL_SHA256 '
+    local allowed_keys=' INSTALLER_FORMAT_VERSION INVENTREE_BASE_SOURCE INVENTREE_RUNTIME_IMAGE INVENTREE_SOURCE_COMMIT INVENTREE_SOURCE_ARCHIVE_NAME INVENTREE_SOURCE_ARCHIVE_URL INVENTREE_SOURCE_ARCHIVE_SHA256 INVENTREE_PREVIOUS_IMAGE_IDS POSTGRES_SOURCE POSTGRES_RUNTIME_IMAGE REDIS_SOURCE REDIS_RUNTIME_IMAGE CADDY_SOURCE CADDY_RUNTIME_IMAGE PLUGIN_VERSION PLUGIN_COMMIT PLUGIN_ARCHIVE_NAME PLUGIN_ARCHIVE_URL PLUGIN_ARCHIVE_SHA256 PLUGIN_ARCHIVE_SUBDIRECTORY PLUGIN_PREVIOUS_VERSION PLUGIN_PREVIOUS_COMMIT PLUGIN_PREVIOUS_ARCHIVE_SHA256 STOCK_PLUGIN_VERSION STOCK_PLUGIN_ARCHIVE_SUBDIRECTORY TRAINING_DATASET_COMMIT TRAINING_DATASET_ARCHIVE_NAME TRAINING_DATASET_ARCHIVE_URL TRAINING_DATASET_ARCHIVE_SHA256 TRAINING_USD_IRT_RATE DOCKER_DESKTOP_VERSION DOCKER_DESKTOP_BUILD DOCKER_DESKTOP_URL DOCKER_DESKTOP_SHA256 WSL_VERSION WSL_URL WSL_SHA256 '
     [[ -f "$versions_file" ]] || die "Missing version manifest: $versions_file"
 
     while IFS='=' read -r key value; do
@@ -240,6 +240,8 @@ load_versions() {
         POSTGRES_SOURCE POSTGRES_RUNTIME_IMAGE REDIS_SOURCE REDIS_RUNTIME_IMAGE \
         CADDY_SOURCE CADDY_RUNTIME_IMAGE PLUGIN_VERSION PLUGIN_COMMIT \
         PLUGIN_ARCHIVE_URL PLUGIN_ARCHIVE_SHA256 PLUGIN_ARCHIVE_SUBDIRECTORY \
+        PLUGIN_PREVIOUS_VERSION PLUGIN_PREVIOUS_COMMIT \
+        PLUGIN_PREVIOUS_ARCHIVE_SHA256 \
         STOCK_PLUGIN_VERSION STOCK_PLUGIN_ARCHIVE_SUBDIRECTORY \
         TRAINING_DATASET_COMMIT TRAINING_DATASET_ARCHIVE_URL \
         TRAINING_DATASET_ARCHIVE_SHA256 TRAINING_USD_IRT_RATE; do
@@ -254,6 +256,14 @@ load_versions() {
         || die "InvenTree source archive URL must use HTTPS"
     [[ "$INVENTREE_SOURCE_ARCHIVE_SHA256" =~ ^[0-9a-fA-F]{64}$ ]] \
         || die "Invalid InvenTree source archive SHA-256 in versions.env"
+    [[ "$PLUGIN_COMMIT" =~ ^[0-9a-f]{40}$ ]] \
+        || die "Invalid plugin commit in versions.env"
+    [[ "$PLUGIN_PREVIOUS_COMMIT" =~ ^[0-9a-f]{40}$ ]] \
+        || die "Invalid previous plugin commit in versions.env"
+    [[ "$PLUGIN_ARCHIVE_SHA256" =~ ^[0-9a-fA-F]{64}$ ]] \
+        || die "Invalid plugin archive SHA-256 in versions.env"
+    [[ "$PLUGIN_PREVIOUS_ARCHIVE_SHA256" =~ ^[0-9a-fA-F]{64}$ ]] \
+        || die "Invalid previous plugin archive SHA-256 in versions.env"
 
     local previous_image_id
     local previous_image_ids=()
@@ -1234,9 +1244,17 @@ current_release_installed_image_id() {
     [[ "${marker_values[PLATFORM]:-}" == "linux/${DAEMON_ARCH}" ]] || return 1
     [[ "${marker_values[INVENTREE_SOURCE_COMMIT]:-}" == "$INVENTREE_SOURCE_COMMIT" ]] || return 1
     [[ "${marker_values[INVENTREE_SOURCE_ARCHIVE_SHA256]:-}" == "$INVENTREE_SOURCE_ARCHIVE_SHA256" ]] || return 1
-    [[ "${marker_values[PLUGIN_COMMIT]:-}" == "$PLUGIN_COMMIT" ]] || return 1
-    [[ "${marker_values[PLUGIN_ARCHIVE_SHA256]:-}" == "$PLUGIN_ARCHIVE_SHA256" ]] || return 1
-    [[ "${marker_values[PLUGIN_VERSION]:-}" == "$PLUGIN_VERSION" ]] || return 1
+    if [[ "${marker_values[PLUGIN_COMMIT]:-}" == "$PLUGIN_COMMIT" \
+        && "${marker_values[PLUGIN_ARCHIVE_SHA256]:-}" == "$PLUGIN_ARCHIVE_SHA256" \
+        && "${marker_values[PLUGIN_VERSION]:-}" == "$PLUGIN_VERSION" ]]; then
+        :
+    elif [[ "${marker_values[PLUGIN_COMMIT]:-}" == "$PLUGIN_PREVIOUS_COMMIT" \
+        && "${marker_values[PLUGIN_ARCHIVE_SHA256]:-}" == "$PLUGIN_PREVIOUS_ARCHIVE_SHA256" \
+        && "${marker_values[PLUGIN_VERSION]:-}" == "$PLUGIN_PREVIOUS_VERSION" ]]; then
+        :
+    else
+        return 1
+    fi
     [[ "${marker_values[STOCK_PLUGIN_VERSION]:-}" == "$STOCK_PLUGIN_VERSION" ]] || return 1
 
     value="${marker_values[INVENTREE_IMAGE_ID]:-}"
@@ -1418,18 +1436,20 @@ if settings.get("CURRENCY_UPDATE_PLUGIN") != "inventree-usd-irt-exchange-rate":
     invalid.append("CURRENCY_UPDATE_PLUGIN")
 if settings.get("CURRENCY_UPDATE_INTERVAL") != 0:
     invalid.append("CURRENCY_UPDATE_INTERVAL")
+if settings.get("PURCHASEORDER_CONVERT_CURRENCY") is not False:
+    invalid.append("PURCHASEORDER_CONVERT_CURRENCY")
 
 print("ok" if not invalid else ", ".join(invalid))
 ' "$configured_settings")"
 
     [[ "$validation_result" == ok ]] \
-        || die "Existing .env lacks required currency/plugin integration settings (${validation_result}). Enable App, URL, Interface, and Schedule integration while preserving your custom settings, then rerun."
+        || die "Existing .env lacks required currency/plugin integration settings (${validation_result}). Enable App, URL, Interface, and Schedule integration, disable purchase-order currency conversion, preserve your custom settings, then rerun."
 }
 
 migrate_plugin_integration_settings() {
     local asset_root="$1"
     local legacy_settings='{"INVENTREE_DEFAULT_CURRENCY":"USD","CURRENCY_CODES":"USD,IRT","CURRENCY_UPDATE_PLUGIN":"inventree-usd-irt-exchange-rate","CURRENCY_UPDATE_INTERVAL":0,"INVENTREE_UPDATE_CHECK_INTERVAL":0,"ENABLE_PLUGINS_SCHEDULE":true,"PLUGIN_ON_STARTUP":false,"INVENTREE_BACKUP_ENABLE":true,"INVENTREE_BACKUP_DAYS":1}'
-    local configured_settings expected_settings
+    local configured_settings expected_settings migration_kind
     local configured_lines=()
     local template_lines=()
 
@@ -1443,12 +1463,38 @@ migrate_plugin_integration_settings() {
         || die "env.template must define INVENTREE_GLOBAL_SETTINGS exactly once."
     expected_settings="${template_lines[0]}"
 
-    if [[ "$configured_settings" == "$legacy_settings" ]]; then
-        note "Enabling app, URL, and interface integration in installer-owned settings"
+    migration_kind="$("${DOCKER[@]}" run --rm --entrypoint python "$INVENTREE_DEPLOY_IMAGE" -c '
+import json
+import sys
+
+try:
+    configured = json.loads(sys.argv[1])
+    expected = json.loads(sys.argv[2])
+    legacy = json.loads(sys.argv[3])
+except (json.JSONDecodeError, TypeError):
+    print("none")
+    raise SystemExit
+previous = dict(expected)
+previous["PURCHASEORDER_CONVERT_CURRENCY"] = True
+
+if configured == legacy:
+    print("legacy")
+elif configured == previous:
+    print("previous")
+else:
+    print("none")
+' "$configured_settings" "$expected_settings" "$legacy_settings")"
+
+    if [[ "$migration_kind" != none ]]; then
+        if [[ "$migration_kind" == legacy ]]; then
+            note "Enabling app, URL, and interface integration in installer-owned settings"
+        else
+            note "Disabling unsupported purchase-order currency conversion in installer-owned settings"
+        fi
         ENV_TEMP_FILE="$(mktemp --tmpdir="$INSTALL_DIR" '.env.tmp.XXXXXXXX')"
         chmod 600 "$ENV_TEMP_FILE"
         awk \
-            -v old_value="INVENTREE_GLOBAL_SETTINGS=${legacy_settings}" \
+            -v old_value="INVENTREE_GLOBAL_SETTINGS=${configured_settings}" \
             -v new_value="INVENTREE_GLOBAL_SETTINGS=${expected_settings}" \
             '$0 == old_value { $0 = new_value } { print }' \
             "$INSTALL_DIR/.env" > "$ENV_TEMP_FILE"
@@ -1632,7 +1678,7 @@ deploy_application() {
     note "Registering mandatory plugins and applying plugin-app migrations"
     compose run --rm --entrypoint python inventree-server \
         src/backend/InvenTree/manage.py shell -c \
-        "from django.utils.text import slugify; from plugin.models import PluginConfig; from plugin.registry import registry; tuple(PluginConfig.objects.get_or_create(key=slugify(module.SLUG if getattr(module, 'SLUG', None) else module.NAME)) for module in registry.plugin_modules); registry.reload_plugins(full_reload=True, force_reload=True, collect=True); plugin_slugs = ('inventree-usd-irt-exchange-rate', 'inventree-stock-xlsx-adjustment'); assert all(registry.get_plugin(slug) for slug in plugin_slugs), 'Mandatory plugins failed to load'; from django.core.management import call_command; call_command('migrate', interactive=False, run_syncdb=True); from django.db.migrations.recorder import MigrationRecorder; assert MigrationRecorder.Migration.objects.filter(app='inventree_usd_irt_exchange_rate', name='0001_price_exchange_snapshot').exists(), 'USD/IRT snapshot migration failed'"
+        "from django.utils.text import slugify; from plugin.models import PluginConfig; from plugin.registry import registry; tuple(PluginConfig.objects.get_or_create(key=slugify(module.SLUG if getattr(module, 'SLUG', None) else module.NAME)) for module in registry.plugin_modules); registry.reload_plugins(full_reload=True, force_reload=True, collect=True); plugin_slugs = ('inventree-usd-irt-exchange-rate', 'inventree-stock-xlsx-adjustment'); assert all(registry.get_plugin(slug) for slug in plugin_slugs), 'Mandatory plugins failed to load'; from django.core.management import call_command; call_command('migrate', interactive=False, run_syncdb=True); from django.db.migrations.recorder import MigrationRecorder; assert MigrationRecorder.Migration.objects.filter(app='inventree_usd_irt_exchange_rate', name='0004_backfill_stock_item_purchase_prices').exists(), 'USD/IRT Stock Item snapshot migration failed'"
     compose run --rm inventree-server invoke static
     compose run --rm inventree-server invoke int.clean-settings
     synchronize_minimal_profile_settings

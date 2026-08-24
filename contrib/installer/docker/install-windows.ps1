@@ -1891,6 +1891,8 @@ function Assert-VersionManifest {
         'POSTGRES_SOURCE', 'POSTGRES_RUNTIME_IMAGE', 'REDIS_SOURCE', 'REDIS_RUNTIME_IMAGE',
         'CADDY_SOURCE', 'CADDY_RUNTIME_IMAGE', 'PLUGIN_VERSION', 'PLUGIN_COMMIT',
         'PLUGIN_ARCHIVE_URL', 'PLUGIN_ARCHIVE_SHA256', 'PLUGIN_ARCHIVE_SUBDIRECTORY',
+        'PLUGIN_PREVIOUS_VERSION', 'PLUGIN_PREVIOUS_COMMIT',
+        'PLUGIN_PREVIOUS_ARCHIVE_SHA256',
         'STOCK_PLUGIN_VERSION', 'STOCK_PLUGIN_ARCHIVE_SUBDIRECTORY',
         'TRAINING_DATASET_COMMIT', 'TRAINING_DATASET_ARCHIVE_URL',
         'TRAINING_DATASET_ARCHIVE_SHA256', 'TRAINING_USD_IRT_RATE',
@@ -1903,6 +1905,7 @@ function Assert-VersionManifest {
     Assert-OnlyKeys -Values $script:Versions -SourceName 'versions.env' -Keys $allowedKeys
     foreach ($hashKey in @(
         'INVENTREE_SOURCE_ARCHIVE_SHA256', 'PLUGIN_ARCHIVE_SHA256',
+        'PLUGIN_PREVIOUS_ARCHIVE_SHA256',
         'TRAINING_DATASET_ARCHIVE_SHA256', 'DOCKER_DESKTOP_SHA256', 'WSL_SHA256'
     )) {
         if ($script:Versions[$hashKey] -notmatch '^[a-fA-F0-9]{64}$') {
@@ -1919,6 +1922,10 @@ function Assert-VersionManifest {
     }
     if ($script:Versions.INVENTREE_SOURCE_COMMIT -cnotmatch '^[a-f0-9]{40}$') {
         Throw-InstallerError 'INVENTREE_SOURCE_COMMIT must be a lowercase 40-character Git commit'
+    }
+    if ($script:Versions.PLUGIN_COMMIT -cnotmatch '^[a-f0-9]{40}$' -or
+        $script:Versions.PLUGIN_PREVIOUS_COMMIT -cnotmatch '^[a-f0-9]{40}$') {
+        Throw-InstallerError 'Plugin commits must be lowercase 40-character Git commits'
     }
     if ($script:Versions.INVENTREE_SOURCE_ARCHIVE_NAME -cnotmatch
         '^[A-Za-z0-9._-]+\.tar\.gz$') {
@@ -2121,9 +2128,12 @@ function Assert-PluginIntegrationSettings {
     if ($integrationSettings.CURRENCY_UPDATE_INTERVAL -ne 0) {
         $invalidSettings.Add('CURRENCY_UPDATE_INTERVAL')
     }
+    if ($integrationSettings.PURCHASEORDER_CONVERT_CURRENCY -ne $false) {
+        $invalidSettings.Add('PURCHASEORDER_CONVERT_CURRENCY')
+    }
 
     if ($invalidSettings.Count -gt 0) {
-        Throw-InstallerError "$SourceName lacks required currency/plugin integration settings: $($invalidSettings -join ', '). Enable App, URL, Interface, and Schedule integration while preserving custom settings, then rerun."
+        Throw-InstallerError "$SourceName lacks required currency/plugin integration settings: $($invalidSettings -join ', '). Enable App, URL, Interface, and Schedule integration, disable purchase-order currency conversion, preserve custom settings, then rerun."
     }
 }
 
@@ -2146,22 +2156,33 @@ function Get-ReleaseMarkerImageId {
         IMAGE_PLATFORM = 'linux/amd64'
         INVENTREE_SOURCE_COMMIT = $script:Versions.INVENTREE_SOURCE_COMMIT
         INVENTREE_SOURCE_ARCHIVE_SHA256 = $script:Versions.INVENTREE_SOURCE_ARCHIVE_SHA256
-        PLUGIN_VERSION = $script:Versions.PLUGIN_VERSION
         STOCK_PLUGIN_VERSION = $script:Versions.STOCK_PLUGIN_VERSION
-        PLUGIN_COMMIT = $script:Versions.PLUGIN_COMMIT
-        PLUGIN_ARCHIVE_SHA256 = $script:Versions.PLUGIN_ARCHIVE_SHA256
     }
+    $pluginMarkerKeys = @('PLUGIN_VERSION', 'PLUGIN_COMMIT', 'PLUGIN_ARCHIVE_SHA256')
     if ($Pending) {
         $expected.MARKER_STATE = 'pending'
         Assert-OnlyKeys `
             -Values $marker `
             -SourceName 'Pending installation marker' `
-            -Keys (@($expected.Keys) + 'INVENTREE_IMAGE_ID')
+            -Keys (@($expected.Keys) + $pluginMarkerKeys + 'INVENTREE_IMAGE_ID')
     }
     foreach ($key in $expected.Keys) {
         if (-not $marker.ContainsKey($key) -or $marker[$key] -cne $expected[$key]) {
             return $null
         }
+    }
+    $isCurrentPluginRelease = (
+        $marker.PLUGIN_VERSION -ceq $script:Versions.PLUGIN_VERSION -and
+        $marker.PLUGIN_COMMIT -ceq $script:Versions.PLUGIN_COMMIT -and
+        $marker.PLUGIN_ARCHIVE_SHA256 -ceq $script:Versions.PLUGIN_ARCHIVE_SHA256
+    )
+    $isPreviousPluginRelease = (
+        $marker.PLUGIN_VERSION -ceq $script:Versions.PLUGIN_PREVIOUS_VERSION -and
+        $marker.PLUGIN_COMMIT -ceq $script:Versions.PLUGIN_PREVIOUS_COMMIT -and
+        $marker.PLUGIN_ARCHIVE_SHA256 -ceq $script:Versions.PLUGIN_PREVIOUS_ARCHIVE_SHA256
+    )
+    if (-not $isCurrentPluginRelease -and -not $isPreviousPluginRelease) {
+        return $null
     }
     if (-not $marker.ContainsKey('INVENTREE_IMAGE_ID') -or
         $marker.INVENTREE_IMAGE_ID -cnotmatch '^sha256:[a-f0-9]{64}$') {
@@ -2238,6 +2259,13 @@ function Prepare-DeploymentFiles {
     }
     $installerGlobalSettings = $templateEnvironment.INVENTREE_GLOBAL_SETTINGS
     Assert-PluginIntegrationSettings -Value $installerGlobalSettings -SourceName 'env.template'
+    $previousInstallerGlobalSettings = $installerGlobalSettings.Replace(
+        '"PURCHASEORDER_CONVERT_CURRENCY":false',
+        '"PURCHASEORDER_CONVERT_CURRENCY":true'
+    )
+    if ($previousInstallerGlobalSettings -ceq $installerGlobalSettings) {
+        Throw-InstallerError 'env.template must disable PURCHASEORDER_CONVERT_CURRENCY'
+    }
 
     Assert-RealDirectory -Path $InstallDirectory -Label 'Install directory' -Create
     $dataDirectory = Join-Path $InstallDirectory 'inventree-data'
@@ -2311,7 +2339,10 @@ function Prepare-DeploymentFiles {
         if (-not $environment.ContainsKey('INVENTREE_GLOBAL_SETTINGS')) {
             Throw-InstallerError 'Existing .env must define INVENTREE_GLOBAL_SETTINGS'
         }
-        $migrateIntegrationSettings = $environment.INVENTREE_GLOBAL_SETTINGS -ceq $legacyGlobalSettings
+        $migrateIntegrationSettings = (
+            $environment.INVENTREE_GLOBAL_SETTINGS -ceq $legacyGlobalSettings -or
+            $environment.INVENTREE_GLOBAL_SETTINGS -ceq $previousInstallerGlobalSettings
+        )
         if (-not $migrateIntegrationSettings) {
             Assert-PluginIntegrationSettings `
                 -Value $environment.INVENTREE_GLOBAL_SETTINGS `
@@ -2600,7 +2631,7 @@ function Deploy-Application {
     Invoke-Compose -ArgumentList @(
         'run', '--rm', '--entrypoint', 'python', 'inventree-server',
         'src/backend/InvenTree/manage.py', 'shell', '-c',
-        "from django.utils.text import slugify; from plugin.models import PluginConfig; from plugin.registry import registry; tuple(PluginConfig.objects.get_or_create(key=slugify(module.SLUG if getattr(module, 'SLUG', None) else module.NAME)) for module in registry.plugin_modules); registry.reload_plugins(full_reload=True, force_reload=True, collect=True); plugin_slugs = ('inventree-usd-irt-exchange-rate', 'inventree-stock-xlsx-adjustment'); assert all(registry.get_plugin(slug) for slug in plugin_slugs), 'Mandatory plugins failed to load'; from django.core.management import call_command; call_command('migrate', interactive=False, run_syncdb=True); from django.db.migrations.recorder import MigrationRecorder; assert MigrationRecorder.Migration.objects.filter(app='inventree_usd_irt_exchange_rate', name='0001_price_exchange_snapshot').exists(), 'USD/IRT snapshot migration failed'"
+        "from django.utils.text import slugify; from plugin.models import PluginConfig; from plugin.registry import registry; tuple(PluginConfig.objects.get_or_create(key=slugify(module.SLUG if getattr(module, 'SLUG', None) else module.NAME)) for module in registry.plugin_modules); registry.reload_plugins(full_reload=True, force_reload=True, collect=True); plugin_slugs = ('inventree-usd-irt-exchange-rate', 'inventree-stock-xlsx-adjustment'); assert all(registry.get_plugin(slug) for slug in plugin_slugs), 'Mandatory plugins failed to load'; from django.core.management import call_command; call_command('migrate', interactive=False, run_syncdb=True); from django.db.migrations.recorder import MigrationRecorder; assert MigrationRecorder.Migration.objects.filter(app='inventree_usd_irt_exchange_rate', name='0004_backfill_stock_item_purchase_prices').exists(), 'USD/IRT Stock Item snapshot migration failed'"
     )
     Invoke-Compose -ArgumentList @('run', '--rm', 'inventree-server', 'invoke', 'static')
     Invoke-Compose -ArgumentList @('run', '--rm', 'inventree-server', 'invoke', 'int.clean-settings')

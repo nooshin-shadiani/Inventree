@@ -286,12 +286,13 @@ A fresh format-v4 installation creates a new `.env`, defaults the application
 to Persian, and imports the training fixture only when explicitly requested.
 It deploys the application, database, cache, and proxy by immutable image ID.
 
-For an existing installer-owned installation, format v4 accepts these two
+For an existing installer-owned installation, format v4 accepts these three
 reviewed amd64 prior application image IDs for a controlled v3-to-v4 upgrade:
 
 ```text
 sha256:47af9a7b9c8753b1cafb1c178745813f5e918fae72b9f7f033e30d298ca1aaa4
 sha256:954fc7ee037d722db7f049fd1523b1c5bce4ee842593319b55b761a3c5bdec3d
+sha256:ca6473e98e0bffbb971b89762752b9b74a5f6da536c3209a2e9db0251aec5ae8
 ```
 
 These are the complete automatic v3 upgrade allowlist. An unknown prior image
@@ -306,7 +307,9 @@ with an actionable error instead of being replaced. Training data is never
 imported during an upgrade, and a format-v3 bundle is not accepted as v4 media.
 After installation or upgrade, same-v4 reruns use the immutable application
 image ID recorded in the installation marker rather than treating the current
-runtime tag as upgrade authority.
+runtime tag as upgrade authority. This release also recognizes the protected
+format-v4 marker for the exact preceding currency-plugin release (1.4.0) so its
+recorded image can be replaced without accepting an arbitrary custom image.
 
 ## Persian language default
 
@@ -323,20 +326,28 @@ layout support, and localized replacements for component-library labels which
 otherwise remain hard-coded in English. Non-Persian locales retain their normal
 translations and English fallback behavior.
 
-Plugin suite commit `3b7e156f61c47e6fdaea89f05efc2f928ad9fb68` also localizes
+Plugin suite commit `8fb67e0701b79e36ae8153d27e848218e3a899ea` also localizes
 the USD/IRT and stock-adjustment interfaces when Persian is active, with
 English fallback for other locales. Machine-readable XLSX column names and
 operation values remain stable English API contracts. The optional demo
 fixture's part, company, location, and order names also remain English because
 they are imported sample data, not untranslated interface text.
 
-Currency plugin 1.4.0 freezes both USD and IRT values when a supplier,
-internal, sale, manual override, or purchase-order line unit price is saved.
-Later exchange-rate updates do not change that paired value. Part and purchase
-order pages expose the saved pairs through permission-checked panels. Its
+Currency plugin 1.5.1 freezes both USD and IRT values when a supplier,
+internal, sale, manual override, purchase-order line, or Stock Item unit price
+is saved. Later exchange-rate updates do not change that paired value. Part,
+purchase-order, and Stock Item pages expose saved pairs through
+permission-checked panels. The Part panel is limited to catalog price sources;
+transaction prices remain on their Purchase Order and Stock Item pages. Its
 migrations also freeze pre-existing prices once, using the rate applied at
 upgrade time, because an earlier historical rate cannot be reconstructed
 truthfully.
+
+Fresh installations disable InvenTree's purchase-order currency conversion.
+This preserves legacy demo prices such as AUD instead of attempting an
+unsupported AUD-to-USD conversion in the intentionally USD/IRT-only rate
+backend. A recognized previous installer-owned settings template is migrated
+to this value during upgrade; custom settings are never silently rewritten.
 
 ## Comprehensive training fixture
 
@@ -466,7 +477,7 @@ The plugins require InvenTree 1.6.0 or newer. Format v4 does not place the
 Persian changes over a prebuilt official application image. `versions.env`
 pins fork commit `a25072fbc3531e15038ff1b16a3eaab5b7864b4b`, its source URL
 and SHA-256, plugin-suite commit
-`3b7e156f61c47e6fdaea89f05efc2f928ad9fb68`, and its SHA-256. Preparation
+`8fb67e0701b79e36ae8153d27e848218e3a899ea`, and its SHA-256. Preparation
 builds the canonical InvenTree production image from that exact fork source,
 verifies its revision label, adds the two pinned plugins, and records the final
 image ID. Regenerate and review format-v4 media whenever either source pin
@@ -524,7 +535,7 @@ persistent inventory and backups are intentionally being destroyed.
 - [InvenTree Docker installation](https://docs.inventree.org/en/latest/start/docker/)
 - [InvenTree plugin installation](https://docs.inventree.org/en/latest/plugins/install/)
 - [Pinned Persian InvenTree fork source](https://github.com/nooshin-shadiani/Inventree/commit/a25072fbc3531e15038ff1b16a3eaab5b7864b4b)
-- [Pinned InvenTree plugin suite](https://github.com/nooshin-shadiani/inventree-plugins/commit/3b7e156f61c47e6fdaea89f05efc2f928ad9fb68)
+- [Pinned InvenTree plugin suite](https://github.com/nooshin-shadiani/inventree-plugins/commit/8fb67e0701b79e36ae8153d27e848218e3a899ea)
 - [Official InvenTree demo dataset](https://github.com/inventree/demo-dataset)
 - [Docker Engine for Ubuntu](https://docs.docker.com/engine/install/ubuntu/)
 - [Docker Engine for Debian](https://docs.docker.com/engine/install/debian/)
