@@ -111,9 +111,35 @@ From a PowerShell 5.1 or newer prompt (the script requests administrator
 approval only when it enables the Windows features):
 
 ```powershell
-Set-ExecutionPolicy -Scope Process Bypass
-.\install-windows.ps1
+powershell.exe -NoProfile -ExecutionPolicy Bypass `
+    -File .\install-windows.ps1
 ```
+
+PowerShell 7 users can run the same installer with:
+
+```powershell
+pwsh.exe -NoProfile -ExecutionPolicy Bypass `
+    -File .\install-windows.ps1
+```
+
+### PowerShell text encoding
+
+The current `install-windows.ps1` source is deliberately ASCII-only so Windows
+PowerShell 5.1 can parse it on every Windows system code page. Persian values
+are represented as Unicode escapes inside the embedded Python commands and are
+created correctly during installation. The current script does not require a
+UTF-8 byte-order mark (BOM).
+
+Run the script as a file. Do not paste its contents into the console and do not
+pipe it through `Get-Content`, `Invoke-Expression`, or `iex`; those paths can
+change quoting or text decoding. Keep the installer beside its `versions.env`,
+`env.template`, Compose file, Dockerfile, cache, and other bundle assets.
+
+If an older installer copy contains direct Persian text and fails under Windows
+PowerShell 5.1, replace the entire bundle with a newly generated bundle. As a
+temporary workaround, use PowerShell 7 (`pwsh.exe`) or save that old `.ps1`
+file as **UTF-8 with BOM** before running it. The newly generated installer does
+not need this workaround.
 
 The default reusable bundle is written to
 `%USERPROFILE%\InvenTree\offline-bundle-windows-amd64-v4`.
@@ -121,7 +147,8 @@ The default reusable bundle is written to
 For a new learning instance populated with the comprehensive training fixture:
 
 ```powershell
-.\install-windows.ps1 -TrainingData
+powershell.exe -NoProfile -ExecutionPolicy Bypass `
+    -File .\install-windows.ps1 -TrainingData
 ```
 
 On both Linux and Windows, the training profile keeps `root` / other
@@ -143,13 +170,16 @@ never restarts the machine itself. Rerun the same command after restarting.
 Prepare the Windows application bundle without deploying:
 
 ```powershell
-.\install-windows.ps1 -PrepareOnly -BundleDirectory E:\inventree-windows
+powershell.exe -NoProfile -ExecutionPolicy Bypass `
+    -File .\install-windows.ps1 `
+    -PrepareOnly -BundleDirectory E:\inventree-windows
 ```
 
 Then install the application without network access:
 
 ```powershell
-E:\inventree-windows\install-windows.ps1 `
+powershell.exe -NoProfile -ExecutionPolicy Bypass `
+    -File E:\inventree-windows\install-windows.ps1 `
     -OfflineBundle E:\inventree-windows
 ```
 
