@@ -1177,10 +1177,27 @@ function Assert-InventreeSourceRevision {
         [Parameter(Mandatory = $true)][string]$Label
     )
 
-    $revision = (Invoke-Docker -ArgumentList @(
-        'image', 'inspect', $Reference, '--format',
-        '{{ index .Config.Labels "org.opencontainers.image.revision" }}'
-    ) -CaptureOutput).Trim()
+    try {
+        $images = @(
+            Invoke-Docker -ArgumentList @('image', 'inspect', $Reference) -CaptureOutput |
+                ConvertFrom-Json -ErrorAction Stop
+        )
+    }
+    catch {
+        if ($_.Exception.Message.StartsWith('Installer error:')) {
+            throw
+        }
+        Throw-InstallerError "Could not inspect $Label metadata: $($_.Exception.Message)"
+    }
+    if ($images.Count -ne 1 -or $null -eq $images[0].Config -or
+        $null -eq $images[0].Config.Labels) {
+        Throw-InstallerError "$Label has no unambiguous image metadata"
+    }
+
+    $revisionProperty = $images[0].Config.Labels.PSObject.Properties[
+        'org.opencontainers.image.revision'
+    ]
+    $revision = if ($null -eq $revisionProperty) { '' } else { [string]$revisionProperty.Value }
     if ($revision -cne $script:Versions.INVENTREE_SOURCE_COMMIT) {
         Throw-InstallerError "$Label source revision mismatch: expected $($script:Versions.INVENTREE_SOURCE_COMMIT), got $revision"
     }
